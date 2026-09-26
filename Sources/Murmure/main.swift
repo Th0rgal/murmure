@@ -25,6 +25,7 @@ import SwiftUI
 
 @MainActor func renderSettings(to dir: URL) {
     let host = NSHostingView(rootView: SettingsView(prefs: Preferences()) {})
+    host.appearance = NSAppearance(named: .darkAqua)
     host.setFrameSize(host.fittingSize)
     guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }
     host.cacheDisplay(in: host.bounds, to: rep)
