@@ -7,7 +7,10 @@ import os
 final class Dictation {
     enum State { case idle, recording, transcribing }
     private(set) var state = State.idle {
-        didSet { onStateChange?(state) }
+        didSet {
+            if state != .recording { meterTimer?.invalidate(); meterTimer = nil }
+            onStateChange?(state)
+        }
     }
     var onStateChange: ((State) -> Void)?
 
@@ -28,16 +31,13 @@ final class Dictation {
     private var chunkError: VoiceError?
     private var language = Settings.language
     private var startedAt = Date()
-    private var levelTick = 0
+    private var meterTimer: Timer?
     private static let maxSeconds: Double = 15 * 60
 
     init() {
         model.onCancel = { [weak self] in self?.cancel() }
         model.onCommit = { [weak self] in self?.commit() }
         model.onLanguage = { [weak self] in self?.showLanguageMenu() }
-        recorder.onLevel = { [weak self] rms in
-            DispatchQueue.main.async { self?.model.push(level: rms) }
-        }
         recorder.onSamples = { [weak self] in
             DispatchQueue.main.async { self?.maybeCutChunk() }
         }
@@ -74,6 +74,12 @@ final class Dictation {
         }
         state = .recording
         panel.show()
+        meterTimer?.invalidate()
+        meterTimer = Timer.scheduledTimer(withTimeInterval: 0.04, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.model.tick(self.recorder.drainLevels())
+        }
+        RunLoop.main.add(meterTimer!, forMode: .common)
         // Load the model while the user speaks; later requests queue behind it.
         voice.async { [client, log] in
             do { try client.load() } catch { log.error("prewarm failed: \(String(describing: error))") }
@@ -194,9 +200,13 @@ final class Dictation {
     @objc func pickLanguage(_ sender: NSMenuItem) {
         guard let code = sender.representedObject as? String, let l = Language.named(code) else { return }
         Settings.language = l
-        model.language = code
+        setLanguage(l)
+    }
+
+    func setLanguage(_ l: Language) {
+        model.language = l.code
         // Chunks already sent keep their language; the rest follow the new one.
-        language = l
+        if state != .idle { language = l }
     }
 
     /// Warm the daemon (and so the model) ahead of the first dictation.

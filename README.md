@@ -15,6 +15,12 @@ Le modèle est chargé **une seule fois** et partagé avec Orb.
 | **Esc** ou ✕ | annule |
 | Puce **FR** au-dessus de la pastille, ou menu ≋ | change la langue (14 langues, mémorisée) |
 
+Le raccourci, la langue, les autorisations et les options se règlent dans la
+fenêtre **Réglages** : elle s'ouvre au premier lancement, quand tu relances
+l'app, et via ≋ › Réglages… (⌘,). Le raccourci peut être des modificateurs
+seuls (gauche/droite distingués, ex. Fn + ⇧ droit, ⌘ droit) ou des
+modificateurs + une touche (ex. ⌥ + Espace, F5).
+
 ## Installation
 
 Prérequis : Mac Apple Silicon, macOS 14 ou plus récent, Xcode 16 ou plus récent.

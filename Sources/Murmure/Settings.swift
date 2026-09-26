@@ -15,6 +15,17 @@ enum Settings {
         set { d.set(newValue, forKey: "liveChunks") }
     }
 
+    static var shortcut: Shortcut {
+        get { d.data(forKey: "shortcut").flatMap { try? JSONDecoder().decode(Shortcut.self, from: $0) } ?? .default }
+        set { d.set(try? JSONEncoder().encode(newValue), forKey: "shortcut") }
+    }
+
+    /// The settings window has been shown once (first-launch onboarding).
+    static var onboarded: Bool {
+        get { d.bool(forKey: "onboarded") }
+        set { d.set(newValue, forKey: "onboarded") }
+    }
+
     /// Put the clipboard back after pasting.
     static var restoreClipboard: Bool {
         get { d.object(forKey: "restoreClipboard") as? Bool ?? true }

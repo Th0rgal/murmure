@@ -2,8 +2,8 @@ import AppKit
 import CoreGraphics
 import MurmureCore
 
-/// Global Fn + Right Shift chord through a CGEventTap. While the overlay is
-/// up it also consumes Esc (cancel) and Return (commit).
+/// Global dictation shortcut through a CGEventTap. While a session is live
+/// it also consumes Esc (cancel) and Return (commit).
 final class HotkeyMonitor {
     var onAction: ((HotkeyState.Action) -> Void)?
     var onEscape: (() -> Void)?
@@ -11,22 +11,28 @@ final class HotkeyMonitor {
     /// Set by the controller: swallow Esc / Return only while a session is live.
     var captureEscape = false
     var captureReturn = false
+    /// Paused while the settings window records a new shortcut.
+    var paused = false
 
-    private(set) var state = HotkeyState()
+    var shortcut: Shortcut {
+        didSet { state.reset(); keyHeld = false }
+    }
+
+    private var state = HotkeyState()
+    private var keyHeld = false
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
 
-    private static let fnKey: Int64 = 63
-    private static let rightShiftKey: Int64 = 60
-    private static let rightShiftMask: UInt64 = 0x04  // NX_DEVICERSHIFTKEYMASK
     private static let esc: Int64 = 53
     private static let returnKeys: Set<Int64> = [36, 76]
+
+    init(shortcut: Shortcut) { self.shortcut = shortcut }
 
     var isRunning: Bool { tap != nil }
 
     func start() -> Bool {
         if tap != nil { return true }
-        let mask = (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue)
+        let mask = (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
         let refcon = Unmanaged.passUnretained(self).toOpaque()
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
@@ -45,37 +51,44 @@ final class HotkeyMonitor {
 
     func resetChord() { state.reset() }
 
+    private func feed(_ pressed: Bool) {
+        if let action = state.update(pressed: pressed, at: ProcessInfo.processInfo.systemUptime) {
+            DispatchQueue.main.async { self.onAction?(action) }
+        }
+    }
+
     private func handle(_ type: CGEventType, _ event: CGEvent) -> Unmanaged<CGEvent>? {
-        switch type {
-        case .tapDisabledByTimeout, .tapDisabledByUserInput:
+        let pass = Unmanaged.passUnretained(event)
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
-        case .flagsChanged:
-            let code = event.getIntegerValueField(.keyboardEventKeycode)
-            let flags = event.flags
-            let t = ProcessInfo.processInfo.systemUptime
-            var action: HotkeyState.Action?
-            if code == Self.fnKey {
-                action = state.update(fn: flags.contains(.maskSecondaryFn), at: t)
-            } else if code == Self.rightShiftKey {
-                action = state.update(rightShift: flags.rawValue & Self.rightShiftMask != 0, at: t)
-            } else if !flags.contains(.maskSecondaryFn) || flags.rawValue & Self.rightShiftMask == 0 {
-                // Resync after missed events (e.g. keys released during a secure input field).
-                action = state.update(fn: flags.contains(.maskSecondaryFn), rightShift: flags.rawValue & Self.rightShiftMask != 0, at: t)
-            }
-            if let action { DispatchQueue.main.async { self.onAction?(action) } }
+            return pass
+        }
+        if paused { return pass }
+        let held = Modifier.held(in: event.flags.rawValue)
+        let code = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+        switch type {
+        case .flagsChanged where shortcut.keyCode == nil:
+            feed(shortcut.modifiersMatch(held))
         case .keyDown:
-            let code = event.getIntegerValueField(.keyboardEventKeycode)
+            if shortcut.keyMatches(code, held: held) || (keyHeld && code == shortcut.keyCode) {
+                if !keyHeld { keyHeld = true; feed(true) }
+                return nil  // ours, including auto-repeat
+            }
             if code == Self.esc, captureEscape {
                 DispatchQueue.main.async { self.onEscape?() }
                 return nil
             }
-            if captureReturn, Self.returnKeys.contains(code), event.flags.intersection([.maskCommand, .maskAlternate, .maskControl, .maskShift]).isEmpty {
+            if captureReturn, Self.returnKeys.contains(Int64(code)), held.subtracting([.fn]).isEmpty {
                 DispatchQueue.main.async { self.onReturn?() }
                 return nil
             }
+        case .keyUp where keyHeld && code == shortcut.keyCode:
+            keyHeld = false
+            feed(false)
+            return nil
         default:
             break
         }
-        return Unmanaged.passUnretained(event)
+        return pass
     }
 }

@@ -1,29 +1,25 @@
 import Foundation
 
-/// Fn + Right Shift chord logic, independent of CGEventTap so it is testable.
+/// Tap / hold logic for the dictation shortcut, independent of the event
+/// source so it is testable.
 ///
-/// - Tap the chord: start recording; tap it again: stop and transcribe.
-/// - Hold the chord longer than `holdThreshold`: push-to-talk, releasing
-///   stops and transcribes.
+/// - Tap the shortcut: start recording; tap it again: stop and transcribe.
+/// - Hold it longer than `holdThreshold`: push-to-talk, releasing stops and
+///   transcribes.
 public struct HotkeyState {
     public enum Action: Equatable { case start, commit }
 
     public var holdThreshold: TimeInterval
-    public private(set) var fnDown = false
-    public private(set) var rightShiftDown = false
     public private(set) var recording = false
-    private var chordDown = false
+    private var down = false
     private var startedAt: TimeInterval?
 
     public init(holdThreshold: TimeInterval = 0.35) { self.holdThreshold = holdThreshold }
 
-    /// Feed one modifier change; returns what to do, if anything.
-    public mutating func update(fn: Bool? = nil, rightShift: Bool? = nil, at t: TimeInterval) -> Action? {
-        if let fn { fnDown = fn }
-        if let rightShift { rightShiftDown = rightShift }
-        let now = fnDown && rightShiftDown
-        defer { chordDown = now }
-        if now && !chordDown {
+    /// Feed whether the shortcut is currently pressed; returns what to do.
+    public mutating func update(pressed: Bool, at t: TimeInterval) -> Action? {
+        defer { down = pressed }
+        if pressed && !down {
             if recording {
                 recording = false
                 startedAt = nil
@@ -33,7 +29,7 @@ public struct HotkeyState {
             startedAt = t
             return .start
         }
-        if !now && chordDown, recording, let s = startedAt {
+        if !pressed && down, recording, let s = startedAt {
             startedAt = nil  // later releases never commit: toggle mode
             if t - s >= holdThreshold {
                 recording = false

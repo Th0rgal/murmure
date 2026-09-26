@@ -5,40 +5,79 @@ import XCTest
 final class HotkeyStateTests: XCTestCase {
     func testTapTogglesRecording() {
         var s = HotkeyState()
-        XCTAssertNil(s.update(fn: true, at: 0))
-        XCTAssertEqual(s.update(rightShift: true, at: 0.01), .start)
-        XCTAssertNil(s.update(rightShift: false, at: 0.1))  // quick release: toggle mode
-        XCTAssertNil(s.update(fn: false, at: 0.12))
+        XCTAssertEqual(s.update(pressed: true, at: 0), .start)
+        XCTAssertNil(s.update(pressed: false, at: 0.1))  // quick release: toggle mode
         XCTAssertTrue(s.recording)
-        XCTAssertNil(s.update(rightShift: true, at: 3))
-        XCTAssertEqual(s.update(fn: true, at: 3.05), .commit)
-        XCTAssertNil(s.update(fn: false, at: 3.1))
+        XCTAssertEqual(s.update(pressed: true, at: 3), .commit)
+        XCTAssertNil(s.update(pressed: false, at: 3.1))
         XCTAssertFalse(s.recording)
     }
 
     func testHoldIsPushToTalk() {
         var s = HotkeyState()
-        _ = s.update(fn: true, at: 0)
-        XCTAssertEqual(s.update(rightShift: true, at: 0), .start)
-        XCTAssertEqual(s.update(fn: false, at: 2), .commit)
-        XCTAssertNil(s.update(rightShift: false, at: 2.1))
+        XCTAssertEqual(s.update(pressed: true, at: 0), .start)
+        XCTAssertNil(s.update(pressed: true, at: 1))  // repeated flags events
+        XCTAssertEqual(s.update(pressed: false, at: 2), .commit)
         XCTAssertFalse(s.recording)
-    }
-
-    func testSingleModifierDoesNothing() {
-        var s = HotkeyState()
-        XCTAssertNil(s.update(fn: true, at: 0))
-        XCTAssertNil(s.update(fn: false, at: 1))
-        XCTAssertNil(s.update(rightShift: true, at: 2))
-        XCTAssertNil(s.update(rightShift: false, at: 3))
     }
 
     func testResetAfterExternalStop() {
         var s = HotkeyState()
-        _ = s.update(fn: true, rightShift: true, at: 0)
-        _ = s.update(fn: false, rightShift: false, at: 0.1)
+        _ = s.update(pressed: true, at: 0)
+        _ = s.update(pressed: false, at: 0.1)
         s.reset()  // e.g. ✓ clicked
-        XCTAssertEqual(s.update(fn: true, rightShift: true, at: 5), .start)
+        XCTAssertEqual(s.update(pressed: true, at: 5), .start)
+    }
+}
+
+final class ShortcutTests: XCTestCase {
+    let fn: UInt64 = 0x80_0000, rshift: UInt64 = 0x04, lshift: UInt64 = 0x02, lcmd: UInt64 = 0x08, ropt: UInt64 = 0x40
+
+    func testModifierOnlyNeedsExactSides() {
+        let s = Shortcut.default
+        XCTAssertEqual(s.label, "Fn + ⇧ droit")
+        XCTAssertTrue(s.modifiersMatch(Modifier.held(in: fn | rshift)))
+        XCTAssertFalse(s.modifiersMatch(Modifier.held(in: fn | lshift)))
+        XCTAssertFalse(s.modifiersMatch(Modifier.held(in: fn | rshift | lcmd)))
+        XCTAssertFalse(s.modifiersMatch(Modifier.held(in: fn)))
+    }
+
+    func testKeyShortcutIgnoresImplicitFn() {
+        let s = Shortcut(modifiers: [.rightOption], keyCode: 49, keyLabel: "Espace")
+        XCTAssertEqual(s.label, "⌥ droit + Espace")
+        XCTAssertTrue(s.keyMatches(49, held: Modifier.held(in: ropt)))
+        XCTAssertTrue(s.keyMatches(49, held: Modifier.held(in: ropt | fn)))
+        XCTAssertFalse(s.keyMatches(49, held: []))
+        XCTAssertFalse(s.keyMatches(50, held: Modifier.held(in: ropt)))
+    }
+
+    func testValidity() {
+        XCTAssertFalse(Shortcut(modifiers: [], keyCode: 0, keyLabel: "A").isValid)
+        XCTAssertTrue(Shortcut(modifiers: [], keyCode: 96, keyLabel: "F5").isValid)
+        XCTAssertTrue(Shortcut(modifiers: [.rightCommand]).isValid)
+        XCTAssertFalse(Shortcut(modifiers: []).isValid)
+    }
+
+    func testCaptureModifierChordOnRelease() {
+        var c = ShortcutCapture()
+        XCTAssertNil(c.flagsChanged(Modifier.held(in: fn)))
+        XCTAssertNil(c.flagsChanged(Modifier.held(in: fn | rshift)))
+        XCTAssertNil(c.flagsChanged(Modifier.held(in: rshift)))
+        XCTAssertEqual(c.flagsChanged([]), Shortcut.default)
+    }
+
+    func testCaptureKeyChord() {
+        var c = ShortcutCapture()
+        _ = c.flagsChanged(Modifier.held(in: ropt))
+        let s = c.keyDown(49, label: "Espace", held: Modifier.held(in: ropt))
+        XCTAssertEqual(s, Shortcut(modifiers: [.rightOption], keyCode: 49, keyLabel: "Espace"))
+        XCTAssertNil(c.keyDown(0, label: "A", held: []))  // bare letter rejected
+        XCTAssertEqual(c.keyDown(96, label: "F5", held: Modifier.held(in: fn))?.modifiers, [])  // implicit fn dropped
+    }
+
+    func testCodableRoundTrip() throws {
+        let s = Shortcut(modifiers: [.leftControl, .leftOption], keyCode: 2, keyLabel: "D")
+        XCTAssertEqual(try JSONDecoder().decode(Shortcut.self, from: JSONEncoder().encode(s)), s)
     }
 }
 

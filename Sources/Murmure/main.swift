@@ -5,7 +5,10 @@ import SwiftUI
 @MainActor func renderPills(to dir: URL) {
     let states: [(String, OverlayModel.Phase, [CGFloat])] = [
         ("idle", .recording, Array(repeating: 0, count: OverlayModel.bars)),
-        ("speaking", .recording, [0.2, 0.5, 0.9, 0.6, 1, 0.7, 0.4, 0.6, 0.3]),
+        ("speaking", .recording, (0 ..< OverlayModel.bars).map { i in
+            let x = Double(i) / Double(OverlayModel.bars - 1)
+            return CGFloat(max(0, sin(x * 9) * 0.5 + sin(x * 23) * 0.3 + 0.25) * (i < 5 ? 0 : 1))
+        }),
         ("transcribing", .transcribing, Array(repeating: 0, count: OverlayModel.bars)),
     ]
     for (name, phase, levels) in states {
@@ -18,6 +21,19 @@ import SwiftUI
             try? png.write(to: dir.appendingPathComponent("pill-\(name).png"))
         }
     }
+}
+
+@MainActor func renderSettings(to dir: URL) {
+    let host = NSHostingView(rootView: SettingsView(prefs: Preferences()) {})
+    host.setFrameSize(host.fittingSize)
+    guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }
+    host.cacheDisplay(in: host.bounds, to: rep)
+    try? rep.representation(using: .png, properties: [:])?.write(to: dir.appendingPathComponent("settings.png"))
+}
+
+if let i = CommandLine.arguments.firstIndex(of: "--render-settings"), i + 1 < CommandLine.arguments.count {
+    MainActor.assumeIsolated { renderSettings(to: URL(fileURLWithPath: CommandLine.arguments[i + 1])) }
+    exit(0)
 }
 
 if let i = CommandLine.arguments.firstIndex(of: "--render-pill"), i + 1 < CommandLine.arguments.count {

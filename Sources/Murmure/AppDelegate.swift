@@ -4,8 +4,10 @@ import MurmureCore
 import ServiceManagement
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
-    private let hotkey = HotkeyMonitor()
+    private let hotkey = HotkeyMonitor(shortcut: Settings.shortcut)
     private let dictation = Dictation()
+    private let prefs = Preferences()
+    private lazy var settings = SettingsWindowController(prefs: prefs)
     private var status: NSStatusItem!
     private var retryTimer: Timer?
 
@@ -35,8 +37,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         hotkey.onEscape = { [weak self] in self?.dictation.cancel() }
         hotkey.onReturn = { [weak self] in self?.dictation.commit() }
 
-        startHotkey(prompt: true)
-        Recorder.requestPermission { _ in }
+        prefs.onShortcutChange = { [weak self] s in self?.hotkey.shortcut = s }
+        prefs.onRecordingShortcut = { [weak self] on in self?.hotkey.paused = on }
+        prefs.onLanguageChange = { [weak self] l in self?.dictation.setLanguage(l) }
+        prefs.onPrewarm = { [weak self] in self?.dictation.prewarm() }
+        prefs.engineStatus = { [weak self] in self?.daemonStatus() ?? "" }
+
+        if Settings.onboarded {
+            startHotkey(prompt: false)
+            if !AXIsProcessTrusted() { showSettings() }
+        } else {
+            // First launch: show the settings (shortcut, language, permissions).
+            Settings.onboarded = true
+            showSettings()
+            startHotkey(prompt: false)
+        }
+    }
+
+    /// Launching the app again (Finder, Spotlight, Raycast) opens the settings.
+    func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows _: Bool) -> Bool {
+        showSettings()
+        return false
+    }
+
+    @objc func showSettings() {
+        settings.show()
     }
 
     /// The event tap needs Accessibility; poll until it is granted.
@@ -61,7 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        menu.addItem(withTitle: hotkey.isRunning ? "Fn + ⇧ droit pour dicter" : "⚠︎ Autoriser l'Accessibilité…",
+        menu.addItem(withTitle: hotkey.isRunning ? "\(hotkey.shortcut.label) pour dicter" : "⚠︎ Autoriser l'Accessibilité…",
                      action: hotkey.isRunning ? nil : #selector(openAccessibility), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Dicter maintenant", action: #selector(dictateNow), keyEquivalent: "").target = self
         menu.addItem(.separator())
@@ -92,16 +117,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(withTitle: daemonStatus(), action: nil, keyEquivalent: "")
         menu.addItem(withTitle: "Précharger le modèle", action: #selector(prewarm), keyEquivalent: "").target = self
         menu.addItem(.separator())
+        menu.addItem(withTitle: "Réglages…", action: #selector(showSettings), keyEquivalent: ",").target = self
         menu.addItem(withTitle: "Quitter Murmure", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
     }
 
-    private func daemonStatus() -> String {
+    fileprivate func daemonStatus() -> String {
         // Cheap probe on a separate connection so it never waits behind inference.
         let probe = VoiceClient()
         defer { probe.close() }
         guard let s = try? probe.request("status", timeout: 0.5) else { return "voiced : occupé ou absent" }
         let loaded = s["loaded"] as? Bool == true
-        let mem = (s["active_memory_bytes"] as? Double).map { String(format: " · %.2f GB", $0 / 1e9) } ?? ""
+        let bytes = (s["active_memory_bytes"] as? Double) ?? (s["active_memory_bytes"] as? Int).map(Double.init)
+        let mem = bytes.map { String(format: " · %.2f GB", $0 / 1e9) } ?? ""
         return "voiced : " + (loaded ? "modèle chargé\(mem)" : "en veille")
     }
 

@@ -3,13 +3,15 @@ import Foundation
 
 /// Microphone → 16 kHz mono Float32, accumulated in memory.
 final class Recorder {
-    var onLevel: ((Float) -> Void)?
     /// Called on the audio thread after new samples arrive.
     var onSamples: (() -> Void)?
 
     private let engine = AVAudioEngine()
     private let lock = NSLock()
     private var samples: [Float] = []
+    // Level meter: one envelope value per 10 ms, drained by the overlay.
+    private var envelope: Float = 0
+    private var levels: [Float] = []
     private let target = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!
 
     static func requestPermission(_ done: @escaping (Bool) -> Void) {
@@ -21,7 +23,11 @@ final class Recorder {
     }
 
     func start() throws {
-        lock.withLock { samples.removeAll(keepingCapacity: true) }
+        lock.withLock {
+            samples.removeAll(keepingCapacity: true)
+            levels.removeAll()
+            envelope = 0
+        }
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else {
@@ -53,12 +59,37 @@ final class Recorder {
         guard error == nil, let ch = out.floatChannelData?[0] else { return }
         let n = Int(out.frameLength)
         let chunk = UnsafeBufferPointer(start: ch, count: n)
-        var e: Float = 0
-        for s in chunk { e += s * s }
-        lock.withLock { samples.append(contentsOf: chunk) }
-        let rms = n > 0 ? (e / Float(n)).squareRoot() : 0
-        onLevel?(rms)
+        lock.withLock {
+            samples.append(contentsOf: chunk)
+            meter(chunk)
+        }
         onSamples?()
+    }
+
+    /// Same perceptual mapping as Orb: -55 dBFS → 0, -10 dBFS → 1, fast
+    /// attack (45 ms), slower release (180 ms). Called under `lock`.
+    private func meter(_ chunk: UnsafeBufferPointer<Float>) {
+        let block = 160  // 10 ms at 16 kHz
+        var i = 0
+        while i + block <= chunk.count {
+            var e: Float = 0
+            for s in chunk[i ..< i + block] { e += s * s }
+            let db = 20 * log10(max((e / Float(block)).squareRoot(), 1e-6))
+            let target = max(0, min(1, (db + 55) / 45))
+            let tau: Float = target > envelope ? 45 : 180
+            envelope += (target - envelope) * (1 - exp(-10 / tau))
+            levels.append(envelope)
+            i += block
+        }
+        if levels.count > 200 { levels.removeFirst(levels.count - 200) }
+    }
+
+    /// Envelope values produced since the last call.
+    func drainLevels() -> [Float] {
+        lock.withLock {
+            defer { levels.removeAll(keepingCapacity: true) }
+            return levels
+        }
     }
 
     var count: Int { lock.withLock { samples.count } }

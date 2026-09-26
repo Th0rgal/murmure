@@ -6,18 +6,19 @@ final class OverlayModel: ObservableObject {
     @Published var phase: Phase = .recording
     @Published var levels: [CGFloat] = Array(repeating: 0, count: OverlayModel.bars)
     @Published var language = "fr"
-    static let bars = 9
+    static let bars = 30
+    private var last: CGFloat = 0
 
     var onCancel: () -> Void = {}
     var onCommit: () -> Void = {}
     var onLanguage: () -> Void = {}
 
-    func push(level rms: Float) {
-        // Speech RMS sits around 0.01–0.2; map to 0…1 on a log scale.
-        let db = 20 * log10(max(rms, 1e-5))
-        let v = CGFloat(max(0, min(1, (db + 55) / 40)))
+    /// One display tick (40 ms): scroll in the loudest envelope value
+    /// measured since the previous tick.
+    func tick(_ envelope: [Float]) {
+        if let peak = envelope.max() { last = CGFloat(peak) } else { last *= 0.8 }
         levels.removeFirst()
-        levels.append(v)
+        levels.append(pow(last, 0.8))  // lifts ordinary speech a little
     }
 }
 
@@ -25,7 +26,7 @@ struct PillView: View {
     @ObservedObject var model: OverlayModel
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 6) {
             Button(action: model.onCancel) {
                 Image(systemName: "xmark")
                     .font(.system(size: 12, weight: .bold))
@@ -36,7 +37,7 @@ struct PillView: View {
             .buttonStyle(.plain)
             .help("Annuler (Esc)")
 
-            center.frame(width: 92, height: 28)
+            center.frame(width: 128, height: 28)
 
             Button(action: model.onCommit) {
                 Group {
@@ -53,7 +54,7 @@ struct PillView: View {
             .disabled(model.phase != .recording)
             .help("Transcrire (Fn + ⇧ droit, ou Entrée)")
         }
-        .padding(.horizontal, 7)
+        .padding(.horizontal, 6)
         .frame(height: 42)
         .background(
             Capsule().fill(Color(white: 0.085))
@@ -78,21 +79,21 @@ struct PillView: View {
     @ViewBuilder private var center: some View {
         switch model.phase {
         case .recording:
-            HStack(spacing: 4) {
+            HStack(spacing: 2.2) {
                 ForEach(0 ..< OverlayModel.bars, id: \.self) { i in
                     Capsule().fill(.white)
-                        .frame(width: 3.5, height: 3.5 + model.levels[i] * 18)
+                        .frame(width: 2, height: 2 + model.levels[i] * 24)
                 }
             }
-            .animation(.easeOut(duration: 0.08), value: model.levels)
+            .animation(.linear(duration: 0.04), value: model.levels)
         case .transcribing:
             TimelineView(.animation) { ctx in
                 let t = ctx.date.timeIntervalSinceReferenceDate
-                HStack(spacing: 4) {
+                HStack(spacing: 2.2) {
                     ForEach(0 ..< OverlayModel.bars, id: \.self) { i in
                         Circle().fill(.white)
-                            .frame(width: 3.5, height: 3.5)
-                            .opacity(0.3 + 0.7 * max(0, sin(t * 6 - Double(i) * 0.6)))
+                            .frame(width: 2, height: 2)
+                            .opacity(0.25 + 0.75 * max(0, sin(t * 7 - Double(i) * 0.35)))
                     }
                 }
             }
