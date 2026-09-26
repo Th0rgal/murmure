@@ -1,35 +1,35 @@
 # Murmure
 
-Dictée vocale locale pour macOS. Appuie sur **Fn + ⇧ droit**, parle, et le texte
-est collé dans l'app active. Tout tourne sur ton Mac : l'audio ne sort jamais.
+Private, on-device dictation for macOS. Press **Fn + Right ⇧**, speak, and the
+text is pasted into the app you are using. Audio never leaves your Mac.
 
 <p align="center">
-  <img src="docs/img/pill-speaking.png" width="232" alt="Pastille d'enregistrement"><br><br>
-  <img src="docs/img/settings.png" width="420" alt="Réglages">
+  <img src="docs/img/pill-speaking.png" width="232" alt="Recording pill"><br><br>
+  <img src="docs/img/settings.png" width="420" alt="Settings">
 </p>
 
-- **Appui bref** : démarre, un second appui transcrit et colle. **Maintenu** : push-to-talk.
-- **Entrée** valide, **Esc** annule. Le raccourci et la langue se changent dans les réglages.
+- **Tap** the shortcut to start, tap again to transcribe and paste. **Hold** it to push-to-talk.
+- **Return** confirms, **Esc** cancels. Shortcut and language are set in Settings.
 
-## Modèle
+## Model
 
 [Cohere Transcribe](https://huggingface.co/CohereLabs/cohere-transcribe-03-2026)
-(environ 2 milliards de paramètres, 14 langues), dans sa version quantifiée
-[MLX 2/3/4 bits](https://huggingface.co/MarkChen1214/cohere-transcribe-03-2026-MLX-Mixed-2bit3bit4bit)
-qui tourne sur le GPU des Mac Apple Silicon : environ 800 MB sur disque et 1 GB
-en mémoire. Un petit service local (`voiced`) le garde chargé une seule fois,
-en commun avec [Orb](https://github.com/Th0rgal/sandboxed.sh). Il le libère
-après 10 minutes d'inactivité.
+(about 2B parameters, 14 languages), in its
+[MLX 2/3/4-bit build](https://huggingface.co/MarkChen1214/cohere-transcribe-03-2026-MLX-Mixed-2bit3bit4bit)
+running on the Apple Silicon GPU: about 800 MB on disk and 1 GB in memory. A
+small local service (`voiced`) loads it only once, keeps it shared with
+[Orb](https://github.com/Th0rgal/sandboxed.sh), and unloads it after 10 minutes
+of inactivity.
 
-## Build et installation
+## Build and install
 
-Il faut un Mac Apple Silicon sous macOS 14 ou plus récent, Xcode 16 et Python 3.10 à 3.13.
+Requires Apple Silicon, macOS 14+, Xcode 16 and Python 3.10–3.13.
 
 ```sh
 git clone https://github.com/Th0rgal/murmure && cd murmure
-scripts/install-voiced.sh --download-model   # service de transcription + modèle
-scripts/build-app.sh --install               # compile, signe et copie dans /Applications
+scripts/install-voiced.sh --download-model   # transcription service + model
+scripts/build-app.sh --install               # build, sign, copy to /Applications
 ```
 
-Au premier lancement, autorise **Accessibilité** et **Micro**. Si Fn ouvre les
-emojis, règle *Clavier › « Appuyer sur 🌐 pour »* sur *Ne rien faire*.
+On first launch, grant **Accessibility** and **Microphone**. If Fn opens the
+emoji picker, set *Keyboard › Press 🌐 key to* to *Do Nothing*.

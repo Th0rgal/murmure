@@ -1,5 +1,5 @@
 diff --git a/orb/src-tauri/src/voice.rs b/orb/src-tauri/src/voice.rs
-index 09a53aa2..1ed8b97a 100644
+index 09a53aa2..8f3392b5 100644
 --- a/orb/src-tauri/src/voice.rs
 +++ b/orb/src-tauri/src/voice.rs
 @@ -9,12 +9,22 @@
@@ -325,7 +325,7 @@ index 09a53aa2..1ed8b97a 100644
 +                let result = match op.as_str() {
 +                    "hello" => json!({"protocol": 1, "shared": true, "pid": 4242, "loaded": true}),
 +                    "transcribe" => {
-+                        json!({"text": "partagé", "duration_secs": wav_duration(&body).unwrap()})
++                        json!({"text": "shared", "duration_secs": wav_duration(&body).unwrap()})
 +                    }
 +                    _ => json!({}),
 +                };
@@ -351,7 +351,7 @@ index 09a53aa2..1ed8b97a 100644
 +            .0
 +            .transcribe(wav(16000, 1, 16, 32000, 1), "fr")
 +            .unwrap();
-+        assert_eq!(t.text, "partagé");
++        assert_eq!(t.text, "shared");
 +        assert_eq!(state.worker_pid(), Some(4242));
 +        assert!(state.0.release());
 +        assert_eq!(server.join().unwrap(), vec!["hello", "transcribe"]);

@@ -1,82 +1,80 @@
 # Architecture
 
-## Objectifs
+Goals: one resident model per Mac whatever the number of clients, low
+perceived latency even on long dictations, no memory used when idle, no
+network.
 
-1. Un seul modèle résident par Mac, quel que soit le nombre de clients (Murmure, Orb, un script).
-2. Une latence perçue minimale, y compris sur les longues dictées.
-3. Aucune mémoire occupée quand on ne dicte pas.
-4. Zéro réseau : l'audio ne quitte jamais la machine.
+```
+ Murmure.app (Swift)                      Orb (Tauri, voice.rs)
+ CGEventTap shortcut → pill               mic button
+ AVAudioEngine → 16 kHz → VAD chunks      WebAudio → WAV
+        └──────────────┬─────────────────────────┘
+                       ▼  protocol v1 (JSON line + WAV bytes)
+   ~/Library/Application Support/md.thomas.voice/voiced.sock   (0600, launchd socket activation)
+                       ▼
+   voiced.py: one process, one inference thread, one MLX model (~0.95 GB peak)
+```
 
-## Composants
+## `voiced/`: shared daemon (Python + MLX)
 
-### `voiced/` : le démon partagé (Python + MLX)
+- `worker.py` and `mlx_audio_cohere_quant_patch.py` are copied unchanged from
+  `orb/voice/` in sandboxed.sh (PR #909, `e03f344`). Pins: model
+  `MarkChen1214/cohere-transcribe-03-2026-MLX-Mixed-2bit3bit4bit@553445e`,
+  mlx-audio `77a6cfc`.
+- `voiced.py` serves the same protocol v1 over a Unix socket, one connection
+  per client. A single inference thread owns the MLX backend; connection
+  threads parse frames and queue jobs, so inference is serialized across
+  clients and MLX is never touched from two threads.
+- `shutdown` closes only the caller's connection; `unload` is advisory. A
+  client disconnecting mid-request (e.g. cancel) only discards its result.
+- The model is unloaded after `VOICED_UNLOAD_SECS` (600 s) without requests;
+  the process exits after `VOICED_EXIT_SECS` (1800 s) without clients.
+- `md.thomas.voiced.plist.in` is a socket-activated LaunchAgent: launchd owns
+  the socket and starts voiced on the first connection.
+- `scripts/install-voiced.sh` reuses Orb's venv when present
+  (`--own-venv` builds a dedicated one).
 
-- `worker.py` et `mlx_audio_cohere_quant_patch.py` sont **copiés à l'identique** depuis
-  `orb/voice/` de sandboxed.sh (PR #909, commit `e03f344`). Mêmes pins : modèle
-  `MarkChen1214/cohere-transcribe-03-2026-MLX-Mixed-2bit3bit4bit@553445e`, mlx-audio `77a6cfc`.
-- `voiced.py` réutilise `Worker`, `read_request` et `write_response` pour servir le **même
-  protocole v1** sur un socket Unix, avec une connexion par client.
-  - Un **seul thread d'inférence** possède le backend MLX. Les threads de connexion
-    décodent les trames puis passent les jobs par une queue. L'inférence est donc
-    sérialisée entre clients, et MLX n'est jamais utilisé depuis deux threads.
-  - `shutdown` ne ferme que la connexion du client qui l'envoie. `unload` est indicatif :
-    c'est voiced qui gère la résidence du modèle.
-  - Si un client se déconnecte en cours de requête (par exemple l'annulation dans Orb), le
-    démon ne s'arrête pas : le résultat est simplement jeté.
-  - Mémoire : le modèle est déchargé après `VOICED_UNLOAD_SECS` (600 s) sans requête. Le
-    process s'arrête après `VOICED_EXIT_SECS` (1800 s) sans client.
-- `md.thomas.voiced.plist.in` est un LaunchAgent **activé par socket**. launchd possède
-  `voiced.sock` (mode 0600) et démarre voiced à la première connexion. Les clients n'ont
-  donc jamais à gérer le cycle de vie du démon. `launch_activate_socket` est appelé via
-  ctypes. Lancé à la main, voiced crée lui-même le socket.
-- `scripts/install-voiced.sh` réutilise le venv d'Orb
-  (`~/Library/Application Support/Orb/voice/.venv`) s'il existe, pour ne pas dupliquer
-  environ 1 GB de dépendances. Sinon, `--own-venv` crée un venv dédié.
+`hello` adds `{"shared": true, "daemon": "voiced", "clients", "pid", "loaded"}`
+to Orb's fields.
 
-Protocole (identique à Orb) : une ligne JSON par requête, suivie de `audio_bytes` octets
-WAV pour `transcribe`, et une ligne JSON par réponse. `hello` ajoute
-`{"shared": true, "daemon": "voiced", "clients": n, "pid": …, "loaded": …}`.
+## `Sources/MurmureCore`: testable logic
 
-### `Sources/MurmureCore` : logique testable
+- `Shortcut`: modifiers alone (left/right distinguished) or modifiers + key;
+  `ShortcutCapture` records one from key events.
+- `HotkeyState`: tap toggles, hold (> 0.35 s) is push-to-talk.
+- `Chunker`: energy VAD on 30 ms frames with an adaptive threshold; cuts in
+  the middle of a ≥ 450 ms pause once 7 s have accumulated, forced before
+  28 s (the model works on ≤ 35 s windows).
+- `VoiceClient`: POSIX socket client, `SO_RCVTIMEO` timeouts, one reconnect.
+- `Wav`: 16-bit PCM mono 16 kHz encoder.
 
-- `HotkeyState` gère l'accord Fn + ⇧ droit. Un tap bascule l'enregistrement ; un maintien
-  de plus de 0,35 s fait du push-to-talk.
-- `Chunker` est une VAD par énergie sur des trames de 30 ms, avec un seuil adaptatif :
-  3 × le 10e percentile, plafonné à 30 % du 90e percentile, sur les 10 dernières secondes.
-  Il coupe au milieu d'une pause d'au moins 450 ms une fois 7 s accumulées, et force la
-  coupe sur la trame la plus calme avant 28 s.
-- `VoiceClient` est le client POSIX du socket (timeouts via `SO_RCVTIMEO`, reconnexion
-  unique si le démon a été relancé).
-- `Wav` encode en PCM 16 bits mono 16 kHz.
+## `Sources/Murmure`: the app
 
-### `Sources/Murmure` : l'app
+- `HotkeyMonitor`: `CGEventTap` (needs Accessibility); swallows Esc/Return
+  during a session.
+- `Recorder`: `AVAudioEngine` → `AVAudioConverter` to 16 kHz mono, plus a
+  10 ms level envelope (45 ms attack, 180 ms release).
+- `Dictation`: session state machine. The model is preloaded when a session
+  starts; VAD chunks are transcribed while you speak on a serial queue; on
+  commit only the tail is sent, chunks are joined in order and pasted.
+- `Overlay`: non-activating `NSPanel` (the target app keeps focus) with a
+  SwiftUI pill.
+- `Paster`: pasteboard + synthetic ⌘V, previous clipboard restored.
+- `SettingsWindow`: shortcut, language, open at login, missing permissions.
 
-- `HotkeyMonitor` : `CGEventTap` sur `flagsChanged` (keycodes 63 = Fn, 60 = ⇧ droit).
-  Pendant une session, il avale Esc et Entrée. Il nécessite l'Accessibilité.
-- `Recorder` : `AVAudioEngine`, puis `AVAudioConverter` vers 16 kHz mono float.
-- `Dictation` : la machine à états de la session. Le préchargement est lancé au démarrage
-  de la session. Chaque morceau VAD est envoyé sur une queue série (le client n'est pas
-  thread-safe). À la validation, seule la fin de l'audio est envoyée, puis les morceaux
-  sont assemblés dans l'ordre et collés. Un compteur de session jette les résultats d'une
-  session annulée.
-- `Overlay` : un `NSPanel` non activant (l'app cible garde le focus) contenant une
-  pastille SwiftUI, avec des barres de niveau en direct et des points animés pendant la
-  transcription.
-- `Paster` : presse-papiers puis ⌘V, et restauration du presse-papiers précédent.
-
-## Performances mesurées (M2, 16 GB)
+## Measured (M2, 16 GB)
 
 | | |
 | --- | --- |
-| Chargement du modèle | 1,2 à 2,5 s (préchauffage à froid inclus : jusqu'à 10 s juste après le démarrage) |
-| Transcription à chaud, extrait de démo de 5,4 s | 0,6 à 0,9 s |
-| Mémoire MLX active / pic | 0,87 / 0,95 GB |
-| Dictée de 60 s sans découpage (log Orb) | environ 10 s d'inférence après validation |
-| Dictée de 60 s avec découpage | seule la dernière phrase reste à transcrire (environ 1 s) |
+| Model load | 1.2–2.5 s |
+| Warm transcription, 5.4 s clip | 0.6–0.9 s |
+| MLX memory active / peak | 0.87 / 0.95 GB |
+| 60 s dictation, no chunking (Orb log) | ~10 s after stopping |
+| 60 s dictation, with chunking | only the last sentence remains (~1 s) |
 
-## Pistes
+## Tests
 
-- **Swift pur, sans Python.** `Blaizzy/mlx-audio-swift` contient déjà un port Swift de
-  Cohere Transcribe. Il faudrait l'adapter au checkpoint MarkChen (les pointwise 1×1 y sont des
-  `Linear` quantifiés, pas des `Conv1d`). Voiced pourrait alors devenir un XPC service natif.
-- Streaming token par token (`generateStream` côté Swift) pour afficher le texte en direct.
+```sh
+swift test                          # shortcut, VAD, WAV, languages + live tests against voiced
+python3 voiced/test_voiced.py -v    # daemon with a fake backend
+```

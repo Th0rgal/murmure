@@ -35,7 +35,7 @@ struct PillView: View {
                     .background(Circle().fill(Color(white: 0.27)))
             }
             .buttonStyle(.plain)
-            .help("Annuler (Esc)")
+            .help("Cancel (Esc)")
 
             center.frame(width: 128, height: 28)
 
@@ -52,7 +52,7 @@ struct PillView: View {
             }
             .buttonStyle(.plain)
             .disabled(model.phase != .recording)
-            .help("Transcrire (Fn + ⇧ droit, ou Entrée)")
+            .help("Transcribe (Return)")
         }
         .padding(.horizontal, 6)
         .frame(height: 42)
@@ -70,7 +70,7 @@ struct PillView: View {
             }
             .buttonStyle(.plain)
             .offset(y: -8)
-            .help("Langue")
+            .help("Language")
         }
         .padding(.top, 10)
         .fixedSize()

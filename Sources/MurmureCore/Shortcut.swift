@@ -38,14 +38,14 @@ public enum Modifier: String, Codable, CaseIterable, Sendable {
     public var label: String {
         switch self {
         case .fn: "Fn"
-        case .leftControl: "⌃ gauche"
-        case .rightControl: "⌃ droit"
-        case .leftOption: "⌥ gauche"
-        case .rightOption: "⌥ droit"
-        case .leftShift: "⇧ gauche"
-        case .rightShift: "⇧ droit"
-        case .leftCommand: "⌘ gauche"
-        case .rightCommand: "⌘ droit"
+        case .leftControl: "Left ⌃"
+        case .rightControl: "Right ⌃"
+        case .leftOption: "Left ⌥"
+        case .rightOption: "Right ⌥"
+        case .leftShift: "Left ⇧"
+        case .rightShift: "Right ⇧"
+        case .leftCommand: "Left ⌘"
+        case .rightCommand: "Right ⌘"
         }
     }
 
@@ -55,8 +55,8 @@ public enum Modifier: String, Codable, CaseIterable, Sendable {
     }
 }
 
-/// A global shortcut: either modifiers alone (Fn + ⇧ droit) or modifiers
-/// plus one key (⌥ + Espace, F5…).
+/// A global shortcut: either modifiers alone (Fn + Right ⇧) or modifiers
+/// plus one key (⌥ + Space, F5…).
 public struct Shortcut: Codable, Equatable, Sendable {
     public var modifiers: Set<Modifier>
     public var keyCode: UInt16?
@@ -77,7 +77,7 @@ public struct Shortcut: Codable, Equatable, Sendable {
 
     public var usesFn: Bool { modifiers.contains(.fn) }
 
-    /// Modifier-only shortcuts match the exact set held, so Fn + ⇧ droit
+    /// Modifier-only shortcuts match the exact set held, so Fn + Right ⇧
     /// does not fire while ⌘ is also down (⌘⇧… shortcuts stay usable).
     public func modifiersMatch(_ held: Set<Modifier>) -> Bool {
         held == modifiers

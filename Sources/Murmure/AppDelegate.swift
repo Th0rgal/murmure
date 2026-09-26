@@ -40,8 +40,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         prefs.onShortcutChange = { [weak self] s in self?.hotkey.shortcut = s }
         prefs.onRecordingShortcut = { [weak self] on in self?.hotkey.paused = on }
         prefs.onLanguageChange = { [weak self] l in self?.dictation.setLanguage(l) }
-        prefs.onPrewarm = { [weak self] in self?.dictation.prewarm() }
-        prefs.engineStatus = { [weak self] in self?.daemonStatus() ?? "" }
 
         if Settings.onboarded {
             startHotkey(prompt: false)
@@ -86,12 +84,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        menu.addItem(withTitle: hotkey.isRunning ? "\(hotkey.shortcut.label) pour dicter" : "⚠︎ Autoriser l'Accessibilité…",
-                     action: hotkey.isRunning ? nil : #selector(openAccessibility), keyEquivalent: "").target = self
-        menu.addItem(withTitle: "Dicter maintenant", action: #selector(dictateNow), keyEquivalent: "").target = self
-        menu.addItem(.separator())
-
-        let langItem = NSMenuItem(title: "Langue : \(Settings.language.name)", action: nil, keyEquivalent: "")
+        if hotkey.isRunning {
+            menu.addItem(withTitle: "Dictate (\(hotkey.shortcut.label))", action: #selector(dictateNow), keyEquivalent: "").target = self
+        } else {
+            menu.addItem(withTitle: "Allow Accessibility…", action: #selector(openAccessibility), keyEquivalent: "").target = self
+        }
+        let langItem = NSMenuItem(title: "Language", action: nil, keyEquivalent: "")
         let sub = NSMenu()
         for l in Language.all {
             let i = NSMenuItem(title: l.name, action: #selector(Dictation.pickLanguage(_:)), keyEquivalent: "")
@@ -102,34 +100,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         langItem.submenu = sub
         menu.addItem(langItem)
-
-        let live = menu.addItem(withTitle: "Transcrire pendant que je parle", action: #selector(toggleLive), keyEquivalent: "")
-        live.target = self
-        live.state = Settings.liveChunks ? .on : .off
-        let clip = menu.addItem(withTitle: "Restaurer le presse-papiers", action: #selector(toggleClipboard), keyEquivalent: "")
-        clip.target = self
-        clip.state = Settings.restoreClipboard ? .on : .off
-        let login = menu.addItem(withTitle: "Lancer au démarrage", action: #selector(toggleLogin), keyEquivalent: "")
-        login.target = self
-        login.state = SMAppService.mainApp.status == .enabled ? .on : .off
-
         menu.addItem(.separator())
-        menu.addItem(withTitle: daemonStatus(), action: nil, keyEquivalent: "")
-        menu.addItem(withTitle: "Précharger le modèle", action: #selector(prewarm), keyEquivalent: "").target = self
-        menu.addItem(.separator())
-        menu.addItem(withTitle: "Réglages…", action: #selector(showSettings), keyEquivalent: ",").target = self
-        menu.addItem(withTitle: "Quitter Murmure", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-    }
-
-    fileprivate func daemonStatus() -> String {
-        // Cheap probe on a separate connection so it never waits behind inference.
-        let probe = VoiceClient()
-        defer { probe.close() }
-        guard let s = try? probe.request("status", timeout: 0.5) else { return "voiced : occupé ou absent" }
-        let loaded = s["loaded"] as? Bool == true
-        let bytes = (s["active_memory_bytes"] as? Double) ?? (s["active_memory_bytes"] as? Int).map(Double.init)
-        let mem = bytes.map { String(format: " · %.2f GB", $0 / 1e9) } ?? ""
-        return "voiced : " + (loaded ? "modèle chargé\(mem)" : "en veille")
+        menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",").target = self
+        menu.addItem(withTitle: "Quit Murmure", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
     }
 
     @objc private func openAccessibility() {
@@ -138,15 +111,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func dictateNow() { dictation.toggle() }
-    @objc private func prewarm() { dictation.prewarm() }
-    @objc private func toggleLive() { Settings.liveChunks.toggle() }
-    @objc private func toggleClipboard() { Settings.restoreClipboard.toggle() }
 
-    @objc private func toggleLogin() {
-        do {
-            if SMAppService.mainApp.status == .enabled { try SMAppService.mainApp.unregister() } else { try SMAppService.mainApp.register() }
-        } catch {
-            NSSound.beep()
-        }
-    }
 }

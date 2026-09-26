@@ -35,7 +35,7 @@ final class ShortcutTests: XCTestCase {
 
     func testModifierOnlyNeedsExactSides() {
         let s = Shortcut.default
-        XCTAssertEqual(s.label, "Fn + ⇧ droit")
+        XCTAssertEqual(s.label, "Fn + Right ⇧")
         XCTAssertTrue(s.modifiersMatch(Modifier.held(in: fn | rshift)))
         XCTAssertFalse(s.modifiersMatch(Modifier.held(in: fn | lshift)))
         XCTAssertFalse(s.modifiersMatch(Modifier.held(in: fn | rshift | lcmd)))
@@ -43,8 +43,8 @@ final class ShortcutTests: XCTestCase {
     }
 
     func testKeyShortcutIgnoresImplicitFn() {
-        let s = Shortcut(modifiers: [.rightOption], keyCode: 49, keyLabel: "Espace")
-        XCTAssertEqual(s.label, "⌥ droit + Espace")
+        let s = Shortcut(modifiers: [.rightOption], keyCode: 49, keyLabel: "Space")
+        XCTAssertEqual(s.label, "Right ⌥ + Space")
         XCTAssertTrue(s.keyMatches(49, held: Modifier.held(in: ropt)))
         XCTAssertTrue(s.keyMatches(49, held: Modifier.held(in: ropt | fn)))
         XCTAssertFalse(s.keyMatches(49, held: []))
@@ -69,8 +69,8 @@ final class ShortcutTests: XCTestCase {
     func testCaptureKeyChord() {
         var c = ShortcutCapture()
         _ = c.flagsChanged(Modifier.held(in: ropt))
-        let s = c.keyDown(49, label: "Espace", held: Modifier.held(in: ropt))
-        XCTAssertEqual(s, Shortcut(modifiers: [.rightOption], keyCode: 49, keyLabel: "Espace"))
+        let s = c.keyDown(49, label: "Space", held: Modifier.held(in: ropt))
+        XCTAssertEqual(s, Shortcut(modifiers: [.rightOption], keyCode: 49, keyLabel: "Space"))
         XCTAssertNil(c.keyDown(0, label: "A", held: []))  // bare letter rejected
         XCTAssertEqual(c.keyDown(96, label: "F5", held: Modifier.held(in: fn))?.modifiers, [])  // implicit fn dropped
     }

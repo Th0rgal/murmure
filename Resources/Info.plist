@@ -11,7 +11,7 @@
   <key>CFBundleVersion</key><string>1</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSUIElement</key><true/>
-  <key>NSMicrophoneUsageDescription</key><string>Murmure enregistre ta voix pour la transcrire localement sur ce Mac.</string>
+  <key>NSMicrophoneUsageDescription</key><string>Murmure records your voice to transcribe it on this Mac.</string>
   <key>NSHighResolutionCapable</key><true/>
 </dict>
 </plist>

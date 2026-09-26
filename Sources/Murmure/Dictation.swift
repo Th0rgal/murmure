@@ -49,7 +49,7 @@ final class Dictation {
         guard state == .idle else { return }
         Recorder.requestPermission { [weak self] ok in
             guard let self else { return }
-            guard ok else { return self.flash("Micro refusé — Réglages › Confidentialité") }
+            guard ok else { return self.flash("Microphone access denied") }
             self.begin()
         }
     }
@@ -163,13 +163,13 @@ final class Dictation {
         session += 1
         if let e = chunkError, text.isEmpty {
             state = .idle
-            return flash(e.code == "daemon_missing" ? "voiced absent — scripts/install-voiced.sh" : e.message)
+            return flash(e.code == "daemon_missing" ? "voiced not installed" : e.message)
         }
         state = .idle
         panel.hide()
         guard !text.isEmpty else { return }
         Paster.insert(text, restore: Settings.restoreClipboard)
-        if !Paster.canPost { flash("Copié — autorise l'Accessibilité pour coller") }
+        if !Paster.canPost { flash("Copied: allow Accessibility to paste") }
     }
 
     private func flash(_ message: String) {
@@ -209,10 +209,4 @@ final class Dictation {
         if state != .idle { language = l }
     }
 
-    /// Warm the daemon (and so the model) ahead of the first dictation.
-    func prewarm() {
-        voice.async { [client, log] in
-            do { try client.load() } catch { log.error("prewarm failed: \(String(describing: error))") }
-        }
-    }
 }

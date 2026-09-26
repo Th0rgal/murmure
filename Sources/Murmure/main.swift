@@ -14,6 +14,7 @@ import SwiftUI
     for (name, phase, levels) in states {
         let m = OverlayModel()
         m.phase = phase
+        m.language = "en"
         m.levels = levels
         let r = ImageRenderer(content: PillView(model: m).padding(12).background(Color(white: 0.11)))
         r.scale = 2
@@ -24,7 +25,7 @@ import SwiftUI
 }
 
 @MainActor func renderSettings(to dir: URL) {
-    let host = NSHostingView(rootView: SettingsView(prefs: Preferences()) {})
+    let host = NSHostingView(rootView: SettingsView(prefs: Preferences()))
     host.appearance = NSAppearance(named: .darkAqua)
     host.setFrameSize(host.fittingSize)
     guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }

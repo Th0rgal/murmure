@@ -12,12 +12,9 @@ final class Preferences: ObservableObject {
     @Published var language = Settings.language {
         didSet { Settings.language = language; onLanguageChange(language) }
     }
-    @Published var liveChunks = Settings.liveChunks { didSet { Settings.liveChunks = liveChunks } }
-    @Published var restoreClipboard = Settings.restoreClipboard { didSet { Settings.restoreClipboard = restoreClipboard } }
     @Published var launchAtLogin = SMAppService.mainApp.status == .enabled
     @Published var accessibility = AXIsProcessTrusted()
     @Published var microphone = AVCaptureDevice.authorizationStatus(for: .audio)
-    @Published var engine = "…"
     @Published var recordingShortcut = false {
         didSet { onRecordingShortcut(recordingShortcut) }
     }
@@ -25,19 +22,12 @@ final class Preferences: ObservableObject {
     var onShortcutChange: (Shortcut) -> Void = { _ in }
     var onLanguageChange: (Language) -> Void = { _ in }
     var onRecordingShortcut: (Bool) -> Void = { _ in }
-    var onPrewarm: () -> Void = {}
-    var engineStatus: () -> String = { "" }
 
     func refresh() {
         accessibility = AXIsProcessTrusted()
         microphone = AVCaptureDevice.authorizationStatus(for: .audio)
         launchAtLogin = SMAppService.mainApp.status == .enabled
         if Settings.language != language { language = Settings.language }
-        let probe = engineStatus
-        DispatchQueue.global(qos: .utility).async {
-            let s = probe()
-            DispatchQueue.main.async { self.engine = s }
-        }
     }
 
     func setLaunchAtLogin(_ on: Bool) {
@@ -52,100 +42,60 @@ final class Preferences: ObservableObject {
 
 struct SettingsView: View {
     @ObservedObject var prefs: Preferences
-    var close: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 12) {
+        VStack(spacing: 0) {
+            VStack(spacing: 6) {
                 Image(systemName: "waveform")
-                    .font(.system(size: 22, weight: .semibold))
-                    .frame(width: 44, height: 44)
-                    .background(RoundedRectangle(cornerRadius: 11).fill(Color(white: 0.1)))
+                    .font(.system(size: 24, weight: .semibold))
                     .foregroundStyle(.white)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Murmure").font(.title2.weight(.semibold))
-                    Text("Dictée locale. L'audio ne quitte pas ce Mac.").font(.callout).foregroundStyle(.secondary)
-                }
+                    .frame(width: 52, height: 52)
+                    .background(RoundedRectangle(cornerRadius: 13).fill(Color(white: 0.1)))
+                Text("Murmure").font(.title3.weight(.semibold))
+                Text("Private, on-device dictation").font(.callout).foregroundStyle(.secondary)
             }
-            .padding(.bottom, 16)
+            .padding(.top, 22)
+            .padding(.bottom, 6)
 
             Form {
                 Section {
-                    LabeledContent("Raccourci") {
-                        ShortcutField(prefs: prefs)
-                    }
-                    Text("Un appui : démarre, un second : transcrit et colle. Maintenu : parle, relâche pour coller. Esc annule, Entrée valide.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    if prefs.shortcut.usesFn {
-                        HStack(alignment: .firstTextBaseline) {
-                            Text("Règle « Appuyer sur 🌐 pour » sur « Ne rien faire », sinon Fn ouvre aussi les emojis ou la dictée Apple.")
-                                .font(.caption).foregroundStyle(.secondary)
-                            Spacer()
-                            Button("Clavier…") {
-                                NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension")!)
-                            }
-                            .controlSize(.small)
-                        }
-                    }
-                }
-
-                Section {
-                    Picker("Langue", selection: $prefs.language) {
+                    LabeledContent("Shortcut") { ShortcutField(prefs: prefs) }
+                    Picker("Language", selection: $prefs.language) {
                         ForEach(Language.all, id: \.self) { l in Text(l.name).tag(l) }
                     }
-                    Text("Le modèle ne détecte pas la langue. Tu peux aussi la changer pendant la dictée avec la pastille.")
+                    Toggle("Open at login", isOn: Binding(get: { prefs.launchAtLogin }, set: { prefs.setLaunchAtLogin($0) }))
+                } footer: {
+                    Text("Tap to start and stop, or hold to talk. Esc cancels.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
 
-                Section("Autorisations") {
-                    PermissionRow(
-                        title: "Accessibilité", detail: "Raccourci global et collage du texte",
-                        granted: prefs.accessibility, action: "Ouvrir les réglages"
-                    ) {
-                        let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-                        AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
-                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
-                    }
-                    PermissionRow(
-                        title: "Micro", detail: "Enregistrer ta voix",
-                        granted: prefs.microphone == .authorized,
-                        action: prefs.microphone == .notDetermined ? "Autoriser" : "Ouvrir les réglages"
-                    ) {
-                        if prefs.microphone == .notDetermined {
-                            Recorder.requestPermission { _ in prefs.refresh() }
-                        } else {
-                            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
+                if !prefs.accessibility || prefs.microphone != .authorized {
+                    Section("Permissions") {
+                        if !prefs.accessibility {
+                            PermissionRow(title: "Accessibility", detail: "Global shortcut and pasting") {
+                                let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+                                AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
+                                NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+                            }
                         }
-                    }
-                }
-
-                Section("Options") {
-                    Toggle("Transcrire pendant que je parle", isOn: $prefs.liveChunks)
-                    Toggle("Restaurer le presse-papiers après le collage", isOn: $prefs.restoreClipboard)
-                    Toggle("Lancer au démarrage", isOn: Binding(get: { prefs.launchAtLogin }, set: { prefs.setLaunchAtLogin($0) }))
-                }
-
-                Section("Moteur") {
-                    LabeledContent("Cohere Transcribe (MLX)") {
-                        HStack {
-                            Text(prefs.engine).foregroundStyle(.secondary)
-                            Button("Précharger") { prefs.onPrewarm() }.controlSize(.small)
+                        if prefs.microphone != .authorized {
+                            PermissionRow(title: "Microphone", detail: "Recording your voice") {
+                                if prefs.microphone == .notDetermined {
+                                    Recorder.requestPermission { _ in prefs.refresh() }
+                                } else {
+                                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
+                                }
+                            }
                         }
                     }
                 }
             }
             .formStyle(.grouped)
             .scrollDisabled(true)
-            .padding(.horizontal, -20)
-
-            HStack {
-                Spacer()
-                Button("Terminé", action: close).keyboardShortcut(.defaultAction)
-            }
-            .padding(.top, 8)
+            .padding(.bottom, 6)
         }
-        .padding(20)
-        .frame(width: 520)
+        .frame(width: 420)
+        .fixedSize(horizontal: false, vertical: true)
         .background(Color(nsColor: .windowBackgroundColor))
     }
 }
@@ -153,24 +103,17 @@ struct SettingsView: View {
 private struct PermissionRow: View {
     let title: String
     let detail: String
-    let granted: Bool
-    let action: String
-    let perform: () -> Void
+    let grant: () -> Void
 
     var body: some View {
         HStack {
-            Image(systemName: granted ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                .foregroundStyle(granted ? .green : .orange)
+            Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
             VStack(alignment: .leading) {
                 Text(title)
                 Text(detail).font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
-            if granted {
-                Text("Autorisé").foregroundStyle(.secondary)
-            } else {
-                Button(action, action: perform)
-            }
+            Button("Grant", action: grant)
         }
     }
 }
@@ -188,8 +131,8 @@ struct ShortcutField: View {
             Button {
                 prefs.recordingShortcut ? stop() : start()
             } label: {
-                Text(prefs.recordingShortcut ? (preview.isEmpty ? "Appuie sur ton raccourci…" : preview) : prefs.shortcut.label)
-                    .frame(minWidth: 170)
+                Text(prefs.recordingShortcut ? (preview.isEmpty ? "Press shortcut…" : preview) : prefs.shortcut.label)
+                    .frame(minWidth: 130)
                     .foregroundStyle(prefs.recordingShortcut ? Color.accentColor : .primary)
             }
             if prefs.shortcut != .default && !prefs.recordingShortcut {
@@ -197,7 +140,7 @@ struct ShortcutField: View {
                     prefs.shortcut = .default
                 } label: { Image(systemName: "arrow.counterclockwise") }
                     .buttonStyle(.borderless)
-                    .help("Revenir à Fn + ⇧ droit")
+                    .help("Reset to Fn + Right ⇧")
             }
         }
         .onDisappear(perform: stop)
@@ -237,7 +180,7 @@ struct ShortcutField: View {
 
     static func keyLabel(_ e: NSEvent) -> String {
         let named: [UInt16: String] = [
-            49: "Espace", 36: "Entrée", 48: "Tab", 51: "⌫", 117: "⌦", 123: "←", 124: "→", 125: "↓", 126: "↑",
+            49: "Space", 36: "Return", 48: "Tab", 51: "⌫", 117: "⌦", 123: "←", 124: "→", 125: "↓", 126: "↑",
             122: "F1", 120: "F2", 99: "F3", 118: "F4", 96: "F5", 97: "F6", 98: "F7", 100: "F8", 101: "F9",
             109: "F10", 103: "F11", 111: "F12", 105: "F13", 107: "F14", 113: "F15", 106: "F16", 64: "F17",
             79: "F18", 80: "F19", 90: "F20",
@@ -255,10 +198,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     init(prefs: Preferences) {
         self.prefs = prefs
         let window = NSWindow(contentRect: .zero, styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        window.title = "Réglages de Murmure"
+        window.title = "Murmure"
         window.isReleasedWhenClosed = false
         super.init(window: window)
-        window.contentViewController = NSHostingController(rootView: SettingsView(prefs: prefs) { [weak window] in window?.close() })
+        window.contentViewController = NSHostingController(rootView: SettingsView(prefs: prefs))
         window.delegate = self
     }
 

@@ -31,10 +31,10 @@ final class Recorder {
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else {
-            throw NSError(domain: "Murmure", code: 1, userInfo: [NSLocalizedDescriptionKey: "Aucun micro disponible"])
+            throw NSError(domain: "Murmure", code: 1, userInfo: [NSLocalizedDescriptionKey: "No microphone available"])
         }
         guard let converter = AVAudioConverter(from: format, to: target) else {
-            throw NSError(domain: "Murmure", code: 2, userInfo: [NSLocalizedDescriptionKey: "Format micro non supporté"])
+            throw NSError(domain: "Murmure", code: 2, userInfo: [NSLocalizedDescriptionKey: "Unsupported microphone format"])
         }
         input.removeTap(onBus: 0)
         input.installTap(onBus: 0, bufferSize: 1600, format: format) { [weak self] buffer, _ in
