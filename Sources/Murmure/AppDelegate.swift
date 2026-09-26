@@ -41,6 +41,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         prefs.onRecordingShortcut = { [weak self] on in self?.hotkey.paused = on }
         prefs.onLanguageChange = { [weak self] l in self?.dictation.setLanguage(l) }
 
+        // Open at login by default (only from /Applications, never from a dev build).
+        if !Settings.loginDefaultApplied, Bundle.main.bundlePath.hasPrefix("/Applications/") {
+            Settings.loginDefaultApplied = true
+            try? SMAppService.mainApp.register()
+        }
+
         if Settings.onboarded {
             startHotkey(prompt: false)
             if !AXIsProcessTrusted() { showSettings() }

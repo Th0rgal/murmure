@@ -31,5 +31,5 @@ scripts/install-voiced.sh --download-model   # transcription service + model
 scripts/build-app.sh --install               # build, sign, copy to /Applications
 ```
 
-On first launch, grant **Accessibility** and **Microphone**. If Fn opens the
+Murmure opens at login (toggle in Settings). On first launch, grant **Accessibility** and **Microphone**. If Fn opens the
 emoji picker, set *Keyboard › Press 🌐 key to* to *Do Nothing*.

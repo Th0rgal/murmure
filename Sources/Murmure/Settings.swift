@@ -26,6 +26,13 @@ enum Settings {
         set { d.set(newValue, forKey: "onboarded") }
     }
 
+    /// "Open at login" has been turned on once by default; after that the
+    /// user's choice in Settings wins.
+    static var loginDefaultApplied: Bool {
+        get { d.bool(forKey: "loginDefaultApplied") }
+        set { d.set(newValue, forKey: "loginDefaultApplied") }
+    }
+
     /// Put the clipboard back after pasting.
     static var restoreClipboard: Bool {
         get { d.object(forKey: "restoreClipboard") as? Bool ?? true }
