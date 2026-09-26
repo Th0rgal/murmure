@@ -77,6 +77,6 @@ WAV pour `transcribe`, et une ligne JSON par réponse. `hello` ajoute
 ## Pistes
 
 - **Swift pur, sans Python.** `Blaizzy/mlx-audio-swift` contient déjà un port Swift de
-  Cohere Transcribe. Il faudrait l'adapter au checkpoint MarkChen (pointwise en `Linear`,
-  voir `IPHONE.md`). Voiced pourrait alors devenir un XPC service natif.
+  Cohere Transcribe. Il faudrait l'adapter au checkpoint MarkChen (les pointwise 1×1 y sont des
+  `Linear` quantifiés, pas des `Conv1d`). Voiced pourrait alors devenir un XPC service natif.
 - Streaming token par token (`generateStream` côté Swift) pour afficher le texte en direct.

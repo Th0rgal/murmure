@@ -60,8 +60,7 @@ et **Micro**. Si Fn seul ouvre les emojis ou la dictée Apple, règle
   précédent est restauré, et l'entrée est marquée transitoire pour que les
   gestionnaires de presse-papiers l'ignorent.
 
-Détails : [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). iPhone :
-[docs/IPHONE.md](docs/IPHONE.md).
+Détails : [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Développement
 
