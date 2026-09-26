@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Installed by scripts/install-voiced.sh into ~/Library/LaunchAgents.
+     launchd owns the socket and starts voiced on the first connection
+     (socket activation); voiced exits by itself after VOICED_EXIT_SECS idle. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>md.thomas.voiced</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@PYTHON@</string>
+    <string>@HOME_DIR@/runtime/voiced.py</string>
+  </array>
+  <key>Sockets</key>
+  <dict>
+    <key>Listener</key>
+    <dict>
+      <key>SockPathName</key><string>@HOME_DIR@/voiced.sock</string>
+      <key>SockPathMode</key><integer>384</integer>
+    </dict>
+  </dict>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONUNBUFFERED</key><string>1</string>
+    <key>PYTHONDONTWRITEBYTECODE</key><string>1</string>
+    <key>ORB_VOICE_MODEL_DIR</key><string>@MODEL_DIR@</string>
+    <key>VOICED_HOME</key><string>@HOME_DIR@</string>
+  </dict>
+  <key>StandardErrorPath</key><string>@HOME_DIR@/logs/voiced.log</string>
+  <key>StandardOutPath</key><string>@HOME_DIR@/logs/voiced.log</string>
+  <key>ProcessType</key><string>Interactive</string>
+</dict>
+</plist>
