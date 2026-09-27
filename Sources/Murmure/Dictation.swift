@@ -15,7 +15,9 @@ final class Dictation {
     var onStateChange: ((State) -> Void)?
 
     let model = OverlayModel()
-    private lazy var panel = OverlayPanel(model: model)
+    /// Rebuilt for every session: a long-lived panel can silently stop
+    /// appearing on screen after sleep/wake or a display change.
+    private var panel: OverlayPanel?
     private let recorder = Recorder()
     private let client = VoiceClient()
     /// Every daemon call goes through this queue (VoiceClient is not thread-safe).
@@ -73,7 +75,7 @@ final class Dictation {
             return flash(error.localizedDescription)
         }
         state = .recording
-        panel.show()
+        showPanel()
         meterTimer?.invalidate()
         meterTimer = Timer.scheduledTimer(withTimeInterval: 0.04, repeats: true) { [weak self] _ in
             guard let self else { return }
@@ -99,7 +101,7 @@ final class Dictation {
         if state == .recording { recorder.stop() }
         session += 1  // results for the old session are dropped
         state = .idle
-        panel.hide()
+        hidePanel()
     }
 
     func commit() {
@@ -109,6 +111,20 @@ final class Dictation {
         model.phase = .transcribing
         let tail = Array(all[min(chunkStart, all.count)...])
         submitChunk(tail, final: true)
+    }
+
+    // MARK: Overlay
+
+    private func showPanel() {
+        if let panel, panel.isVisible { return }
+        let p = OverlayPanel(model: model)
+        panel = p
+        p.show()
+    }
+
+    private func hidePanel() {
+        panel?.hide()
+        panel = nil
     }
 
     // MARK: Chunks
@@ -166,7 +182,7 @@ final class Dictation {
             return flash(e.code == "daemon_missing" ? "voiced not installed" : e.message)
         }
         state = .idle
-        panel.hide()
+        hidePanel()
         guard !text.isEmpty else { return }
         Paster.insert(text, restore: Settings.restoreClipboard)
         if !Paster.canPost { flash("Copied: allow Accessibility to paste") }
@@ -175,11 +191,11 @@ final class Dictation {
     private func flash(_ message: String) {
         log.error("\(message, privacy: .public)")
         model.phase = .message(message)
-        panel.show()
+        showPanel()
         let id = session
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
             guard let self, self.state == .idle, self.session == id else { return }
-            self.panel.hide()
+            self.hidePanel()
         }
     }
 

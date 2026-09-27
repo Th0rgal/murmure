@@ -138,8 +138,9 @@ final class OverlayPanel: NSPanel {
     }
 
     func hide() {
-        NSAnimationContext.runAnimationGroup({ $0.duration = 0.12; animator().alphaValue = 0 }) { [weak self] in
-            self?.orderOut(nil)
+        // Keeps the panel alive until it is ordered out.
+        NSAnimationContext.runAnimationGroup({ $0.duration = 0.12; animator().alphaValue = 0 }) {
+            self.orderOut(nil)
         }
     }
 }
