@@ -68,7 +68,11 @@ mkdir -p "$(dirname "$PLIST")"
 sed -e "s|@PYTHON@|$(esc "$PY")|g" -e "s|@HOME_DIR@|$(esc "$HOME_DIR")|g" -e "s|@MODEL_DIR@|$(esc "$MODEL_DIR")|g" \
   "$ROOT/voiced/md.thomas.voiced.plist.in" > "$PLIST"
 plutil -lint "$PLIST" >/dev/null
-launchctl bootstrap "gui/$(id -u)" "$PLIST"
+if ! launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null; then
+  sleep 1
+  rm -f "$HOME_DIR/voiced.sock"
+  launchctl bootstrap "gui/$(id -u)" "$PLIST"
+fi
 
 echo "voiced installed"
 echo "  socket: $HOME_DIR/voiced.sock (started on first connection)"
