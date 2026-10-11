@@ -7,7 +7,7 @@ import Foundation
 /// - Hold it longer than `holdThreshold`: push-to-talk, releasing stops and
 ///   transcribes.
 public struct HotkeyState {
-    public enum Action: Equatable { case start, commit }
+    public enum Action: Equatable { case start, commit, releaseCommit }
 
     public var holdThreshold: TimeInterval
     public private(set) var recording = false
@@ -33,7 +33,7 @@ public struct HotkeyState {
             startedAt = nil  // later releases never commit: toggle mode
             if t - s >= holdThreshold {
                 recording = false
-                return .commit
+                return .releaseCommit
             }
         }
         return nil

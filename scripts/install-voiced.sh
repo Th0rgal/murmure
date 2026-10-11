@@ -61,7 +61,7 @@ fi
 MODEL_DIR="$("$PY" -c "import sys; sys.path.insert(0, '$ROOT/voiced'); import worker; print(worker.resolve_model_dir())")"
 [ -f "$MODEL_DIR/model.safetensors" ] || echo "WARNING: model missing at $MODEL_DIR (rerun with --download-model)" >&2
 
-cp "$ROOT/voiced/voiced.py" "$ROOT/voiced/worker.py" "$ROOT/voiced/mlx_audio_cohere_quant_patch.py" "$HOME_DIR/runtime/"
+cp "$ROOT/voiced/voiced.py" "$ROOT/voiced/worker.py" "$ROOT/voiced/pipeline.py" "$ROOT/voiced/learn.py" "$ROOT/voiced/mlx_audio_cohere_quant_patch.py" "$HOME_DIR/runtime/"
 
 esc() { printf '%s' "$1" | sed -e 's/[&|]/\\&/g'; }
 mkdir -p "$(dirname "$PLIST")"

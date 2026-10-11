@@ -30,10 +30,13 @@ final class Dictation {
     private var fedUpTo = 0
     private var chunkTexts: [Int: String] = [:]
     private var chunkCount = 0
+    private var streamedUpTo = 0
     private var chunkError: VoiceError?
     private var language = Settings.language
     private var startedAt = Date()
     private var meterTimer: Timer?
+    private var releaseTailWork: DispatchWorkItem?
+    private let vocabStore = VocabularyStore()
     private static let maxSeconds: Double = 15 * 60
 
     init() {
@@ -48,6 +51,12 @@ final class Dictation {
     // MARK: Session
 
     func start() {
+        if let pending = releaseTailWork {
+            // Re-pressed during the push-to-talk release tail window: keep recording!
+            pending.cancel()
+            releaseTailWork = nil
+            return
+        }
         guard state == .idle else { return }
         Recorder.requestPermission { [weak self] ok in
             guard let self else { return }
@@ -57,6 +66,8 @@ final class Dictation {
     }
 
     private func begin() {
+        releaseTailWork?.cancel()
+        releaseTailWork = nil
         session += 1
         language = Settings.language
         chunker = Chunker()
@@ -64,10 +75,12 @@ final class Dictation {
         fedUpTo = 0
         chunkTexts = [:]
         chunkCount = 0
+        streamedUpTo = 0
         chunkError = nil
         startedAt = Date()
         model.language = language.code
         model.phase = .recording
+        model.livePreview = ""
         model.levels = Array(repeating: 0, count: OverlayModel.bars)
         do {
             try recorder.start()
@@ -97,14 +110,36 @@ final class Dictation {
     }
 
     func cancel() {
+        releaseTailWork?.cancel()
+        releaseTailWork = nil
         guard state != .idle else { return }
         if state == .recording { recorder.stop() }
         session += 1  // results for the old session are dropped
+        model.livePreview = ""
         state = .idle
         hidePanel()
     }
 
+    /// Triggered on push-to-talk key release: waits `Settings.releaseTailMs`
+    /// before stopping the recorder so the final syllable is never clipped.
+    func commitAfterReleaseTail() {
+        guard state == .recording else { return }
+        releaseTailWork?.cancel()
+        let tailSecs = max(0, Settings.releaseTailMs / 1000.0)
+        guard tailSecs > 0 else { return commit() }
+        let id = session
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.session == id, self.state == .recording else { return }
+            self.releaseTailWork = nil
+            self.commit()
+        }
+        releaseTailWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + tailSecs, execute: work)
+    }
+
     func commit() {
+        releaseTailWork?.cancel()
+        releaseTailWork = nil
         guard state == .recording else { return }
         let all = recorder.stop()
         state = .transcribing
@@ -127,16 +162,34 @@ final class Dictation {
         panel = nil
     }
 
+    private func makePipeline() -> TextPipeline {
+        TextPipeline(
+            removeDisfluencies: Settings.removeDisfluencies,
+            voiceCommands: Settings.voiceCommands,
+            convertNumbers: Settings.convertNumbers,
+            corrections: vocabStore.loadCorrections(),
+            vocabulary: vocabStore.loadVocabulary()
+        )
+    }
+
     // MARK: Chunks
 
     private func maybeCutChunk() {
         guard state == .recording else { return }
         if Date().timeIntervalSince(startedAt) > Self.maxSeconds { return commit() }
-        guard Settings.liveChunks else { return }
         let end = recorder.count
         let fresh = recorder.samples(fedUpTo ..< end)
         fedUpTo = end
-        guard let cut = chunker.feed(fresh), cut > chunkStart else { return }
+        let cut = chunker.feed(fresh)
+        if releaseTailWork == nil,
+           chunker.shouldAutoStop(
+               noSpeechSecs: Settings.autoStopNoSpeechSecs,
+               silenceAfterSpeechSecs: Settings.autoStopSilenceSecs
+           )
+        {
+            return chunker.hasSpoken ? commit() : cancel()
+        }
+        guard Settings.liveChunks, let cut, cut > chunkStart else { return }
         let piece = recorder.samples(chunkStart ..< cut)
         chunkStart = cut
         submitChunk(piece, final: false)
@@ -147,12 +200,19 @@ final class Dictation {
         chunkCount += 1
         let id = session
         let lang = language.code
+        let prevContext = index > 0 ? chunkTexts[index - 1] : nil
+        let vocab = vocabStore.loadVocabulary()
         voice.async { [weak self, client] in
             var text = ""
             var failure: VoiceError?
             if samples.count >= 16_000 / 5 {
                 do {
-                    let t = try client.transcribe(wav: Wav.encode(samples), language: lang)
+                    let t = try client.transcribe(
+                        wav: Wav.encode(samples),
+                        language: lang,
+                        context: prevContext,
+                        vocabulary: vocab
+                    )
                     text = t.text
                     self?.log.info("chunk \(index) \(t.durationSecs, format: .fixed(precision: 2))s infer=\(t.inferSecs, format: .fixed(precision: 2))s")
                 } catch let e as VoiceError {
@@ -165,26 +225,48 @@ final class Dictation {
                 guard let self, self.session == id else { return }
                 self.chunkTexts[index] = text
                 if let failure { self.chunkError = failure }
+                self.updateLivePreviewAndStream()
                 if final || self.state == .transcribing { self.finishIfDone() }
             }
         }
     }
 
+    private func updateLivePreviewAndStream() {
+        let pipeline = makePipeline()
+        let completed = (0 ..< chunkCount).compactMap { chunkTexts[$0] }
+        let previewText = pipeline.joinAndProcess(completed, language: language)
+        model.livePreview = previewText
+        if let panel, panel.isVisible, let host = panel.contentView {
+            panel.setContentSize(host.fittingSize)
+        }
+        guard Settings.streamInline, state == .recording else { return }
+        while let nextChunk = chunkTexts[streamedUpTo] {
+            let processed = pipeline.process(nextChunk, language: language.code)
+            if !processed.isEmpty {
+                let prefix = streamedUpTo > 0 ? language.joiner : ""
+                Paster.insert(prefix + processed, restore: Settings.restoreClipboard, preferAX: true)
+            }
+            streamedUpTo += 1
+        }
+    }
+
     private func finishIfDone() {
         guard state == .transcribing, chunkTexts.count == chunkCount else { return }
-        let text = (0 ..< chunkCount).compactMap { chunkTexts[$0] }
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .joined(separator: language.joiner)
+        let pipeline = makePipeline()
+        let remainingIndices = Settings.streamInline ? Array(streamedUpTo ..< chunkCount) : Array(0 ..< chunkCount)
+        let rawChunks = remainingIndices.compactMap { chunkTexts[$0] }
+        let text = pipeline.joinAndProcess(rawChunks, language: language)
         session += 1
-        if let e = chunkError, text.isEmpty {
+        model.livePreview = ""
+        if let e = chunkError, text.isEmpty, streamedUpTo == 0 {
             state = .idle
             return flash(e.code == "daemon_missing" ? "voiced not installed" : e.message)
         }
         state = .idle
         hidePanel()
         guard !text.isEmpty else { return }
-        Paster.insert(text, restore: Settings.restoreClipboard)
+        let prefix = (Settings.streamInline && streamedUpTo > 0) ? language.joiner : ""
+        Paster.insert(prefix + text, restore: Settings.restoreClipboard, preferAX: Settings.streamInline)
         if !Paster.canPost { flash("Copied: allow Accessibility to paste") }
     }
 

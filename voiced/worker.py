@@ -378,6 +378,13 @@ class Worker:
         if not isinstance(language, str) or language not in SUPPORTED_LANGUAGES:
             raise WorkerError("unsupported_language", f"language {language!r} is not one of {', '.join(SUPPORTED_LANGUAGES)}")
         punctuation = bool(req.get("punctuation", True))
+        context = req.get("context")
+        if context is not None and not isinstance(context, str):
+            raise WorkerError("bad_request", "context must be a string")
+        vocabulary = req.get("vocabulary")
+        if vocabulary is not None:
+            if not isinstance(vocabulary, list) or not all(isinstance(x, str) for x in vocabulary):
+                raise WorkerError("bad_request", "vocabulary must be a list of strings")
         if not payload:
             raise WorkerError("bad_request", "transcribe needs audio_bytes")
         samples, rate = decode_wav(payload)
@@ -386,13 +393,31 @@ class Worker:
         if not self.backend.loaded:
             load_info = self.backend.load()
         infer = 0.0
+        raw_text = ""
         if secs < MIN_SECS or is_silent(samples):
             # Too short or no signal: the model would only hallucinate.
             text = ""
         else:
             t0 = time.perf_counter()
-            text = self.backend.transcribe(samples, rate, language, punctuation)
+            raw_text = self.backend.transcribe(samples, rate, language, punctuation)
             infer = time.perf_counter() - t0
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            import pipeline as vp
+
+            text = vp.postprocess_transcript(
+                raw_text,
+                language=language,
+                context=context,
+                vocabulary=vocabulary,
+            )
+            vp.retain_recording_if_enabled(
+                wav_bytes=payload,
+                raw_text=raw_text,
+                processed_text=text,
+                language=language,
+                duration_secs=secs,
+                infer_secs=infer,
+            )
         self.transcriptions += 1
         self.last_infer_secs = round(infer, 3)
         # Timings only; the transcript itself must never reach the log file.

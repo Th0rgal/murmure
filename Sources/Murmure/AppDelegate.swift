@@ -32,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             switch action {
             case .start: self.dictation.start()
             case .commit: self.dictation.commit()
+            case .releaseCommit: self.dictation.commitAfterReleaseTail()
             }
         }
         hotkey.onEscape = { [weak self] in self?.dictation.cancel() }

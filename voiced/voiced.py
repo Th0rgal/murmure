@@ -250,6 +250,8 @@ def serve(listener: socket.socket, engine: Engine, exit_after: float, owned_path
                     log(f"idle {engine.idle_for():.0f}s with no client: exiting")
                     return 0
                 continue
+            except OSError:
+                return 0
             conn.settimeout(None)
             threading.Thread(target=serve_connection, args=(engine, conn), name="voiced-conn", daemon=True).start()
     finally:

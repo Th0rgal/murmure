@@ -152,8 +152,16 @@ public final class VoiceClient {
 
     public func load() throws { _ = try request("load", timeout: 240) }
 
-    public func transcribe(wav: Data, language: String) throws -> Transcript {
-        let r = try request("transcribe", fields: ["language": language, "punctuation": true], payload: wav, timeout: 240)
+    public func transcribe(
+        wav: Data,
+        language: String,
+        context: String? = nil,
+        vocabulary: [String]? = nil
+    ) throws -> Transcript {
+        var fields: [String: Any] = ["language": language, "punctuation": true]
+        if let context, !context.isEmpty { fields["context"] = context }
+        if let vocabulary, !vocabulary.isEmpty { fields["vocabulary"] = vocabulary }
+        let r = try request("transcribe", fields: fields, payload: wav, timeout: 240)
         return Transcript(
             text: r["text"] as? String ?? "",
             durationSecs: r["duration_secs"] as? Double ?? 0,

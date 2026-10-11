@@ -38,4 +38,58 @@ enum Settings {
         get { d.object(forKey: "restoreClipboard") as? Bool ?? true }
         set { d.set(newValue, forKey: "restoreClipboard") }
     }
+
+    /// Keep recording for this many milliseconds after push-to-talk key release so the last word is not clipped.
+    static var releaseTailMs: Double {
+        get { d.object(forKey: "releaseTailMs") as? Double ?? 250 }
+        set { d.set(newValue, forKey: "releaseTailMs") }
+    }
+
+    /// Seconds of pre-buffered audio kept while the microphone stays warm.
+    static var prebufferSecs: Double {
+        get { d.object(forKey: "prebufferSecs") as? Double ?? 0.8 }
+        set { d.set(newValue, forKey: "prebufferSecs") }
+    }
+
+    /// Minutes to keep the microphone stream open in the background after a dictation so the next start has 0ms spin-up latency.
+    static var keepWarmMinutes: Double {
+        get { d.object(forKey: "keepWarmMinutes") as? Double ?? 5.0 }
+        set { d.set(newValue, forKey: "keepWarmMinutes") }
+    }
+
+    /// Auto-commit toggle dictation after this many seconds of silence once speech has occurred (0 = off).
+    static var autoStopSilenceSecs: Double {
+        get { d.object(forKey: "autoStopSilenceSecs") as? Double ?? 5.0 }
+        set { d.set(newValue, forKey: "autoStopSilenceSecs") }
+    }
+
+    /// Auto-stop toggle dictation if no speech is detected for this many seconds (0 = off).
+    static var autoStopNoSpeechSecs: Double {
+        get { d.object(forKey: "autoStopNoSpeechSecs") as? Double ?? 20.0 }
+        set { d.set(newValue, forKey: "autoStopNoSpeechSecs") }
+    }
+
+    /// Strip filler words ("um", "uh", "euh") and immediate stutters.
+    static var removeDisfluencies: Bool {
+        get { d.object(forKey: "removeDisfluencies") as? Bool ?? true }
+        set { d.set(newValue, forKey: "removeDisfluencies") }
+    }
+
+    /// Interpret spoken editing/formatting commands ("new line", "new paragraph", "scratch that").
+    static var voiceCommands: Bool {
+        get { d.object(forKey: "voiceCommands") as? Bool ?? false }
+        set { d.set(newValue, forKey: "voiceCommands") }
+    }
+
+    /// Convert compound spoken numbers ("twenty five" → "25").
+    static var convertNumbers: Bool {
+        get { d.object(forKey: "convertNumbers") as? Bool ?? false }
+        set { d.set(newValue, forKey: "convertNumbers") }
+    }
+
+    /// Insert completed chunks into the active app as they finish while speaking.
+    static var streamInline: Bool {
+        get { d.object(forKey: "streamInline") as? Bool ?? false }
+        set { d.set(newValue, forKey: "streamInline") }
+    }
 }

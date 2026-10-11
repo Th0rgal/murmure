@@ -6,7 +6,10 @@ import ApplicationServices
 enum Paster {
     static var canPost: Bool { AXIsProcessTrusted() }
 
-    static func insert(_ text: String, restore: Bool) {
+    static func insert(_ text: String, restore: Bool, preferAX: Bool = false) {
+        if preferAX, canPost, insertViaAX(text) {
+            return
+        }
         let pb = NSPasteboard.general
         let saved: [NSPasteboardItem] = restore ? (pb.pasteboardItems ?? []).map { item in
             let copy = NSPasteboardItem()
@@ -33,5 +36,22 @@ enum Paster {
             pb.clearContents()
             if !saved.isEmpty { pb.writeObjects(saved) }
         }
+    }
+
+    /// Inserts `text` directly at the focused UI element's selection via
+    /// Accessibility (`kAXSelectedTextAttribute`), bypassing `NSPasteboard`.
+    /// Returns `true` if the focused element accepted the attribute write.
+    static func insertViaAX(_ text: String) -> Bool {
+        let sys = AXUIElementCreateSystemWide()
+        var focusedRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(sys, kAXFocusedUIElementAttribute as CFString, &focusedRef) == .success,
+              let focused = focusedRef
+        else { return false }
+        let elem = focused as! AXUIElement
+        var settable = DarwinBoolean(false)
+        guard AXUIElementIsAttributeSettable(elem, kAXSelectedTextAttribute as CFString, &settable) == .success,
+              settable.boolValue
+        else { return false }
+        return AXUIElementSetAttributeValue(elem, kAXSelectedTextAttribute as CFString, text as CFTypeRef) == .success
     }
 }

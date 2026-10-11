@@ -17,7 +17,7 @@ final class HotkeyStateTests: XCTestCase {
         var s = HotkeyState()
         XCTAssertEqual(s.update(pressed: true, at: 0), .start)
         XCTAssertNil(s.update(pressed: true, at: 1))  // repeated flags events
-        XCTAssertEqual(s.update(pressed: false, at: 2), .commit)
+        XCTAssertEqual(s.update(pressed: false, at: 2), .releaseCommit)
         XCTAssertFalse(s.recording)
     }
 
@@ -27,6 +27,25 @@ final class HotkeyStateTests: XCTestCase {
         _ = s.update(pressed: false, at: 0.1)
         s.reset()  // e.g. ✓ clicked
         XCTAssertEqual(s.update(pressed: true, at: 5), .start)
+    }
+}
+
+final class RingBufferTests: XCTestCase {
+    func testWrapAroundAndChronologicalDrain() {
+        var rb = RingBuffer(capacity: 5)
+        rb.append(contentsOf: [1, 2, 3])
+        XCTAssertEqual(rb.snapshot(), [1, 2, 3])
+        rb.append(contentsOf: [4, 5, 6, 7])
+        XCTAssertEqual(rb.count, 5)
+        XCTAssertEqual(rb.drain(), [3, 4, 5, 6, 7])
+        XCTAssertEqual(rb.count, 0)
+        XCTAssertTrue(rb.snapshot().isEmpty)
+    }
+
+    func testOversizedAppendKeepsLatestSuffix() {
+        var rb = RingBuffer(capacity: 4)
+        rb.append(contentsOf: [10, 20, 30, 40, 50, 60])
+        XCTAssertEqual(rb.drain(), [30, 40, 50, 60])
     }
 }
 
@@ -133,6 +152,82 @@ final class ChunkerTests: XCTestCase {
     func testShortRecordingNeverCut() {
         var c = Chunker()
         XCTAssertTrue(feed(&c, speech(2) + silence(1) + speech(2)).isEmpty)
+    }
+
+    func testAutoStopOnSilenceAfterSpeechAndNoSpeech() {
+        var c = Chunker()
+        _ = feed(&c, silence(4))
+        XCTAssertFalse(c.hasSpoken)
+        XCTAssertFalse(c.shouldAutoStop(noSpeechSecs: 6.0, silenceAfterSpeechSecs: 3.0))
+        _ = feed(&c, silence(3))
+        XCTAssertTrue(c.shouldAutoStop(noSpeechSecs: 6.0, silenceAfterSpeechSecs: 3.0))
+
+        var c2 = Chunker()
+        _ = feed(&c2, speech(1.0) + silence(1.0))
+        XCTAssertTrue(c2.hasSpoken)
+        XCTAssertFalse(c2.shouldAutoStop(noSpeechSecs: 20.0, silenceAfterSpeechSecs: 3.0))
+        _ = feed(&c2, silence(2.5))
+        XCTAssertTrue(c2.shouldAutoStop(noSpeechSecs: 20.0, silenceAfterSpeechSecs: 3.0))
+    }
+}
+
+final class TextPipelineTests: XCTestCase {
+    func testDisfluencyAndStutterRemoval() {
+        let p = TextPipeline(removeDisfluencies: true)
+        XCTAssertEqual(p.process("Um, I think uh we should ship the the patch."), "I think we should ship the patch.")
+        XCTAssertEqual(p.process("Euh je pense que euh oui.", language: "fr"), "Je pense que oui.")
+    }
+
+    func testCorrectionsAndVocabularyFuzzySnap() {
+        let p = TextPipeline(
+            removeDisfluencies: true,
+            convertNumbers: true,
+            corrections: ["post grass": "PostgreSQL", "graph ana": "Grafana"],
+            vocabulary: ["Murmure", "Kalshi", "Cohere", "Hetzner"]
+        )
+        let input = "Ship the post grass migration, fix the graph Ana alert, and rerun twenty five kalchi backtests on Hertzner with murmure."
+        let out = p.process(input, language: "en")
+        XCTAssertEqual(out, "Ship the PostgreSQL migration, fix the Grafana alert, and rerun 25 Kalshi backtests on Hetzner with Murmure.")
+    }
+
+    func testVoiceCommandsAndScratchThat() {
+        let p = TextPipeline(voiceCommands: true)
+        XCTAssertEqual(p.process("First sentence. Wrong draft scratch that Second sentence new line Third line."), "First sentence. Second sentence\nThird line.")
+    }
+
+    func testSmartChunkJoiner() {
+        let p = TextPipeline(vocabulary: ["Murmure", "Cohere"])
+        let fr = Language.named("fr")!
+        let en = Language.named("en")!
+        // Mid-sentence pause (comma or no period) lowercases non-vocabulary start word of chunk 2
+        XCTAssertEqual(
+            p.joinAndProcess(["When we tested the model,", "The latency was under one second."], language: en),
+            "When we tested the model, the latency was under one second."
+        )
+        // Vocabulary term at start of chunk 2 keeps its capital
+        XCTAssertEqual(
+            p.joinAndProcess(["When we tested", "Murmure on Apple Silicon."], language: en),
+            "When we tested Murmure on Apple Silicon."
+        )
+        // Sentence-ending period keeps capital on chunk 2
+        XCTAssertEqual(
+            p.joinAndProcess(["Premier test terminé.", "Le suivant démarre."], language: fr),
+            "Premier test terminé. Le suivant démarre."
+        )
+    }
+}
+
+final class VocabularyStoreTests: XCTestCase {
+    func testParseAndPersistVocabularyAndCorrections() throws {
+        let tmp = (NSTemporaryDirectory() as NSString).appendingPathComponent("murmure-vocab-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(atPath: tmp) }
+        let store = VocabularyStore(directory: tmp)
+        let parsed = VocabularyStore.parseVocabulary("# comment\nMurmure\nPostgreSQL # database\nmurmure\n")
+        XCTAssertEqual(parsed, ["Murmure", "PostgreSQL"])
+        try store.saveVocabulary(parsed)
+        XCTAssertEqual(store.loadVocabulary(), ["Murmure", "PostgreSQL"])
+        try store.saveCorrections(["post grass": "PostgreSQL"])
+        XCTAssertEqual(store.loadCorrections(), ["post grass": "PostgreSQL"])
     }
 }
 

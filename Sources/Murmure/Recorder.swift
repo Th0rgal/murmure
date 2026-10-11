@@ -1,14 +1,20 @@
 import AVFoundation
 import Foundation
+import MurmureCore
 
-/// Microphone → 16 kHz mono Float32, accumulated in memory.
+/// Microphone → 16 kHz mono Float32, accumulated in memory, with optional
+/// keep-warm pre-buffering (`RingBuffer`) so the first syllable spoken right
+/// as the shortcut is pressed is never clipped by `AVAudioEngine` startup.
 final class Recorder {
-    /// Called on the audio thread after new samples arrive.
+    /// Called on the audio thread after new samples arrive during active recording.
     var onSamples: (() -> Void)?
 
     private let engine = AVAudioEngine()
     private let lock = NSLock()
     private var samples: [Float] = []
+    private var prebuffer = RingBuffer(capacity: 16_000)
+    private var activeRecording = false
+    private var warmTimer: Timer?
     // Level meter: one envelope value per 10 ms, drained by the overlay.
     private var envelope: Float = 0
     private var levels: [Float] = []
@@ -23,17 +29,30 @@ final class Recorder {
     }
 
     func start() throws {
+        warmTimer?.invalidate()
+        warmTimer = nil
+        let prebufferCap = max(1600, Int(Settings.prebufferSecs * 16_000))
+        let alreadyRunning = engine.isRunning
         lock.withLock {
+            let warmSamples = alreadyRunning ? prebuffer.drain() : []
+            prebuffer = RingBuffer(capacity: prebufferCap)
             samples.removeAll(keepingCapacity: true)
+            if !warmSamples.isEmpty {
+                samples.append(contentsOf: warmSamples.suffix(prebufferCap))
+            }
             levels.removeAll()
             envelope = 0
+            activeRecording = true
         }
+        if alreadyRunning { return }
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else {
+            lock.withLock { activeRecording = false }
             throw NSError(domain: "Murmure", code: 1, userInfo: [NSLocalizedDescriptionKey: "No microphone available"])
         }
         guard let converter = AVAudioConverter(from: format, to: target) else {
+            lock.withLock { activeRecording = false }
             throw NSError(domain: "Murmure", code: 2, userInfo: [NSLocalizedDescriptionKey: "Unsupported microphone format"])
         }
         input.removeTap(onBus: 0)
@@ -59,11 +78,17 @@ final class Recorder {
         guard error == nil, let ch = out.floatChannelData?[0] else { return }
         let n = Int(out.frameLength)
         let chunk = UnsafeBufferPointer(start: ch, count: n)
-        lock.withLock {
-            samples.append(contentsOf: chunk)
-            meter(chunk)
+        let isRecording = lock.withLock { () -> Bool in
+            if activeRecording {
+                samples.append(contentsOf: chunk)
+                meter(chunk)
+                return true
+            } else {
+                prebuffer.append(contentsOf: chunk)
+                return false
+            }
         }
-        onSamples?()
+        if isRecording { onSamples?() }
     }
 
     /// Same perceptual mapping as Orb: -55 dBFS → 0, -10 dBFS → 1, fast
@@ -103,8 +128,33 @@ final class Recorder {
 
     @discardableResult
     func stop() -> [Float] {
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
-        return lock.withLock { samples }
+        let warmSecs = Settings.keepWarmMinutes * 60.0
+        let captured = lock.withLock { () -> [Float] in
+            activeRecording = false
+            prebuffer.clear()
+            return samples
+        }
+        if warmSecs > 0 {
+            warmTimer?.invalidate()
+            warmTimer = Timer.scheduledTimer(withTimeInterval: warmSecs, repeats: false) { [weak self] _ in
+                self?.shutdownEngine()
+            }
+        } else {
+            shutdownEngine()
+        }
+        return captured
+    }
+
+    func shutdownEngine() {
+        warmTimer?.invalidate()
+        warmTimer = nil
+        if engine.isRunning {
+            engine.inputNode.removeTap(onBus: 0)
+            engine.stop()
+        }
+        lock.withLock {
+            activeRecording = false
+            prebuffer.clear()
+        }
     }
 }

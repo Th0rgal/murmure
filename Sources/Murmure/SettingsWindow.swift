@@ -12,6 +12,18 @@ final class Preferences: ObservableObject {
     @Published var language = Settings.language {
         didSet { Settings.language = language; onLanguageChange(language) }
     }
+    @Published var removeDisfluencies = Settings.removeDisfluencies {
+        didSet { Settings.removeDisfluencies = removeDisfluencies }
+    }
+    @Published var voiceCommands = Settings.voiceCommands {
+        didSet { Settings.voiceCommands = voiceCommands }
+    }
+    @Published var convertNumbers = Settings.convertNumbers {
+        didSet { Settings.convertNumbers = convertNumbers }
+    }
+    @Published var streamInline = Settings.streamInline {
+        didSet { Settings.streamInline = streamInline }
+    }
     @Published var launchAtLogin = SMAppService.mainApp.status == .enabled
     @Published var accessibility = AXIsProcessTrusted()
     @Published var microphone = AVCaptureDevice.authorizationStatus(for: .audio)
@@ -37,6 +49,14 @@ final class Preferences: ObservableObject {
             NSSound.beep()
         }
         launchAtLogin = SMAppService.mainApp.status == .enabled
+    }
+
+    func openVocabularyFile() {
+        let store = VocabularyStore()
+        if !FileManager.default.fileExists(atPath: store.vocabularyPath) {
+            try? store.saveVocabulary(["# One proper noun or technical term per line (e.g. Murmure, PostgreSQL)"])
+        }
+        NSWorkspace.shared.open(URL(fileURLWithPath: store.vocabularyPath))
     }
 }
 
@@ -67,6 +87,16 @@ struct SettingsView: View {
                 } footer: {
                     Text("Tap to start and stop, or hold to talk. Esc cancels.")
                         .font(.caption).foregroundStyle(.secondary)
+                }
+
+                Section("Dictation & Vocabulary") {
+                    Toggle("Remove filler words (um, uh, euh)", isOn: $prefs.removeDisfluencies)
+                    Toggle("Voice commands (new line, scratch that)", isOn: $prefs.voiceCommands)
+                    Toggle("Convert spoken numbers (twenty five → 25)", isOn: $prefs.convertNumbers)
+                    Toggle("Stream chunks inline as I speak", isOn: $prefs.streamInline)
+                    LabeledContent("Personal vocabulary") {
+                        Button("Edit vocabulary.txt…") { prefs.openVocabularyFile() }
+                    }
                 }
 
                 if !prefs.accessibility || prefs.microphone != .authorized {

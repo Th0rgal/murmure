@@ -41,26 +41,50 @@ to Orb's fields.
 
 - `Shortcut`: modifiers alone (left/right distinguished) or modifiers + key;
   `ShortcutCapture` records one from key events.
-- `HotkeyState`: tap toggles, hold (> 0.35 s) is push-to-talk.
+- `HotkeyState`: tap toggles (`.commit`), hold (> 0.35 s) is push-to-talk (`.releaseCommit`).
+- `RingBuffer`: circular audio buffer (`16_000` samples = 1.0 s at 16 kHz) for
+  keep-warm pre-buffering so speech right at keydown is never clipped.
 - `Chunker`: energy VAD on 30 ms frames with an adaptive threshold; cuts in
   the middle of a ≥ 450 ms pause once 7 s have accumulated, forced before
-  28 s (the model works on ≤ 35 s windows).
-- `VoiceClient`: POSIX socket client, `SO_RCVTIMEO` timeouts, one reconnect.
+  28 s (the model works on ≤ 35 s windows). Also tracks speech onset and
+  trailing silence (`shouldAutoStop`) to end unattended toggle sessions.
+- `TextPipeline`: composable post-processing stages (disfluency & stutter
+  removal → spoken commands → spoken numbers → `corrections.json` →
+  `vocabulary.txt` Levenshtein fuzzy snapping → smart cross-chunk joiner).
+- `VocabularyStore`: loads and saves `vocabulary.txt` and `corrections.json` in
+  `~/Library/Application Support/md.thomas.voice/`.
+- `VoiceClient`: POSIX socket client, `SO_RCVTIMEO` timeouts, one reconnect,
+  passing optional `"context"` and `"vocabulary"` fields on `transcribe`.
 - `Wav`: 16-bit PCM mono 16 kHz encoder.
 
 ## `Sources/Murmure`: the app
 
 - `HotkeyMonitor`: `CGEventTap` (needs Accessibility); swallows Esc/Return
   during a session.
-- `Recorder`: `AVAudioEngine` → `AVAudioConverter` to 16 kHz mono, plus a
-  10 ms level envelope (45 ms attack, 180 ms release).
-- `Dictation`: session state machine. The model is preloaded when a session
-  starts; VAD chunks are transcribed while you speak on a serial queue; on
-  commit only the tail is sent, chunks are joined in order and pasted.
+- `Recorder`: `AVAudioEngine` → `AVAudioConverter` to 16 kHz mono, keep-warm
+  `RingBuffer` pre-buffering, plus a 10 ms level envelope (45 ms attack,
+  180 ms release).
+- `Dictation`: session state machine with a 250 ms push-to-talk release tail
+  (`releaseTailMs`). The model is preloaded when a session starts; VAD chunks
+  are transcribed while you speak on a serial queue with cross-chunk context;
+  completed chunks update the floating pill's live preview (and optionally
+  stream inline via Accessibility); on commit only the tail is sent.
 - `Overlay`: non-activating `NSPanel` (the target app keeps focus) with a
-  SwiftUI pill.
-- `Paster`: pasteboard + synthetic ⌘V, previous clipboard restored.
-- `SettingsWindow`: shortcut, language, open at login, missing permissions.
+  SwiftUI pill and live scrolling chunk preview capsule.
+- `Paster`: direct Accessibility insertion (`kAXSelectedTextAttribute`) when
+  inline streaming is enabled, or pasteboard + synthetic ⌘V with previous
+  clipboard restored.
+- `SettingsWindow`: shortcut, language, open at login, text pipeline toggles,
+  `vocabulary.txt` editor shortcut, and missing permissions.
+
+## `voiced/pipeline.py` & `voiced/learn.py`: daemon pipeline & personal eval
+
+- `voiced/pipeline.py`: daemon-side disfluency removal, `corrections.json`,
+  `vocabulary.txt` fuzzy snapping, cross-chunk casing continuity, and opt-in
+  recording retention (`VOICED_RETAIN_AUDIO=1`, `0700` permissions).
+- `voiced/learn.py`: CLI (`status`, `eval`, `audit`, `suggest`) to measure raw
+  vs. post-processed WER and vocabulary recall on retained clips, audit
+  `corrections.json` rules against reviewed audio, and suggest new vocabulary.
 
 ## Measured (M2, 16 GB)
 
@@ -75,6 +99,6 @@ to Orb's fields.
 ## Tests
 
 ```sh
-swift test                          # shortcut, VAD, WAV, languages + live tests against voiced
-python3 voiced/test_voiced.py -v    # daemon with a fake backend
+swift test                          # shortcut, VAD, WAV, ring buffer, pipeline, vocab + live tests
+python3 voiced/test_voiced.py -v    # daemon, pipeline, retention, and learn CLI with stub backend
 ```

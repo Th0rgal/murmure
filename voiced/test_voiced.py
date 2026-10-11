@@ -16,12 +16,27 @@ import time
 import unittest
 import wave
 
+import importlib.util
+
 os.environ["ORB_VOICE_FAKE"] = "1"
 os.environ["VOICED_NO_LAUNCHD"] = "1"
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
 
-import voiced  # noqa: E402
-import worker  # noqa: E402
+
+def _load_local(name: str):
+    spec = importlib.util.spec_from_file_location(name, os.path.join(_HERE, f"{name}.py"))
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+worker = _load_local("worker")
+pipeline = _load_local("pipeline")
+voiced = _load_local("voiced")
+learn = _load_local("learn")
 
 
 def wav(secs: float = 1.0, amp: int = 3000, rate: int = 16000) -> bytes:
@@ -162,6 +177,128 @@ class VoicedTest(unittest.TestCase):
         self.assertFalse(self.engine.worker.backend.loaded)
         self.assertTrue(c.call("transcribe", wav(), language="en")["ok"])
         c.close()
+
+    def test_context_and_vocabulary_in_transcribe_frame(self):
+        c = Client(self.path)
+        r = c.call(
+            "transcribe",
+            wav(),
+            language="en",
+            context="Previously on",
+            vocabulary=["Murmure", "PostgreSQL"],
+        )
+        self.assertTrue(r["ok"])
+        self.assertIn("[fake en]", r["result"]["text"])
+        # Invalid vocabulary type is rejected cleanly without dropping connection
+        bad = c.call("transcribe", wav(), language="en", vocabulary="not-a-list")
+        self.assertFalse(bad["ok"])
+        self.assertEqual(bad["error"]["code"], "bad_request")
+        self.assertTrue(c.call("status")["ok"])
+        c.close()
+
+
+class PipelineAndLearnTest(unittest.TestCase):
+    def setUp(self):
+        self.home = tempfile.mkdtemp(prefix="vh")
+        os.environ["VOICED_HOME"] = self.home
+
+    def tearDown(self):
+        os.environ.pop("VOICED_RETAIN_AUDIO", None)
+        os.environ.pop("VOICED_HOME", None)
+
+    def test_disfluency_corrections_and_vocabulary_snapping(self):
+        import pipeline as vp
+
+        vocab = ["Murmure", "PostgreSQL", "Grafana", "Kalshi", "Hetzner"]
+        rules = {"post grass": "PostgreSQL", "graph ana": "Grafana"}
+        raw = "Um, ship the post grass migration, uh fix the graph Ana alert, and rerun the kalchi backtest on Hertzner with murmure."
+        cleaned = vp.postprocess_transcript(
+            raw,
+            language="en",
+            vocabulary=vocab,
+            corrections=rules,
+            remove_disfluencies=True,
+        )
+        self.assertEqual(
+            cleaned,
+            "Ship the PostgreSQL migration, fix the Grafana alert, and rerun the Kalshi backtest on Hetzner with Murmure.",
+        )
+
+    def test_cross_chunk_context_casing(self):
+        import pipeline as vp
+
+        # Comma at end of previous chunk lowercases common start word of next chunk
+        out = vp.postprocess_transcript(
+            "The second part continues.",
+            language="en",
+            context="When we spoke first,",
+            vocabulary=["Murmure"],
+        )
+        self.assertEqual(out, "the second part continues.")
+
+        # Vocabulary term at start of next chunk preserves capitalization
+        out_vocab = vp.postprocess_transcript(
+            "Murmure runs locally.",
+            language="en",
+            context="Because",
+            vocabulary=["Murmure"],
+        )
+        self.assertEqual(out_vocab, "Murmure runs locally.")
+
+    def test_retention_and_learn_eval_audit_suggest(self):
+        import learn
+        import pipeline as vp
+
+        with open(os.path.join(self.home, "vocabulary.txt"), "w", encoding="utf-8") as vf:
+            vf.write("# Custom terms\nPostgreSQL\nKalshi\nHetzner\n")
+        with open(os.path.join(self.home, "corrections.json"), "w", encoding="utf-8") as cf:
+            json.dump({"post grass": "PostgreSQL", "no": "yes"}, cf)
+
+        # Default: VOICED_RETAIN_AUDIO is unset -> nothing retained
+        self.assertIsNone(
+            vp.retain_recording_if_enabled(wav(), "raw", "processed", "en", 1.0, 0.05, home=self.home)
+        )
+
+        # Opt-in retention enabled
+        os.environ["VOICED_RETAIN_AUDIO"] = "1"
+        stamp = vp.retain_recording_if_enabled(
+            wav(),
+            "Ship the post grass job on Hertzner with kalchi and SandboxedSh.",
+            "Ship the PostgreSQL job on Hetzner with Kalshi and SandboxedSh.",
+            "en",
+            1.0,
+            0.05,
+            home=self.home,
+        )
+        self.assertIsNotNone(stamp)
+
+        # Annotate the clip with ground-truth reference & simulated raw decode to test `learn.py eval`
+        meta_path = os.path.join(self.home, "recordings", f"{stamp}.json")
+        with open(meta_path, "r", encoding="utf-8") as mf:
+            meta = json.load(mf)
+        meta["reference"] = "Ship the PostgreSQL job on Hetzner with Kalshi and SandboxedSh."
+        meta["simulated_raw"] = "Um ship the post grass job on Hertzner with kalchi and SandboxedSh."
+        meta["reviewed"] = True
+        with open(meta_path, "w", encoding="utf-8") as mf:
+            json.dump(meta, mf)
+
+        status = learn.cmd_status(self.home)
+        self.assertEqual(status["vocabulary_terms"], 3)
+        self.assertEqual(status["recordings_total"], 1)
+
+        ev = learn.cmd_eval(self.home)
+        self.assertEqual(ev["clips"], 1)
+        self.assertGreater(ev["raw_wer"], 0.3)
+        self.assertEqual(ev["post_wer"], 0.0)
+        self.assertLess(ev["raw_vocab_recall"], 1.0)
+        self.assertEqual(ev["post_vocab_recall"], 1.0)
+        self.assertTrue(ev["improved_or_equal"])
+
+        audit = learn.cmd_audit(self.home)
+        self.assertTrue(any("short key 'no'" in w for w in audit["warnings"]))
+
+        sugg = learn.cmd_suggest(self.home)
+        self.assertIn("SandboxedSh", sugg["suggestions"])
 
 
 if __name__ == "__main__":

@@ -17,6 +17,23 @@ public struct Chunker {
     private var frameRms: [Float] = []
     private var cutFrame = 0  // frame index where the pending chunk starts
     private var carry: [Float] = []
+    private var speechFrames = 0
+    private var trailingSilentFrames = 0
+
+    /// True once at least ~150 ms of speech above threshold has been seen.
+    public var hasSpoken: Bool { speechFrames >= 5 }
+
+    /// Duration of continuous silence at the end of the recording so far.
+    public var trailingSilentSecs: Double {
+        let fps = Double(sampleRate) / Double(frame)
+        return Double(trailingSilentFrames) / fps
+    }
+
+    /// Total duration of audio fed into the chunker so far.
+    public var totalSecs: Double {
+        let fps = Double(sampleRate) / Double(frame)
+        return Double(frameRms.count) / fps
+    }
 
     public init(sampleRate: Int = 16_000, minChunk: Double = 7, maxChunk: Double = 28, minPause: Double = 0.45) {
         self.sampleRate = sampleRate
@@ -26,19 +43,36 @@ public struct Chunker {
         self.frame = sampleRate * 30 / 1000
     }
 
+    /// Returns whether a toggle-mode dictation should automatically stop due to
+    /// prolonged silence (either no speech at all, or silence after speaking).
+    public func shouldAutoStop(noSpeechSecs: Double = 20.0, silenceAfterSpeechSecs: Double = 5.0) -> Bool {
+        if hasSpoken {
+            return silenceAfterSpeechSecs > 0 && trailingSilentSecs >= silenceAfterSpeechSecs
+        }
+        return noSpeechSecs > 0 && totalSecs >= noSpeechSecs
+    }
+
     /// Feed the samples recorded since the last call; returns the absolute
     /// sample index at which to cut the next chunk, if one is ready.
     public mutating func feed<S: Collection>(_ samples: S) -> Int? where S.Element == Float {
         carry.append(contentsOf: samples)
+        let fps = Double(sampleRate) / Double(frame)
         var used = 0
         while carry.count - used >= frame {
             var e: Float = 0
             for s in carry[used ..< used + frame] { e += s * s }
-            frameRms.append((e / Float(frame)).squareRoot())
+            let rms = (e / Float(frame)).squareRoot()
+            frameRms.append(rms)
+            let thresh = silenceThreshold(fps: fps)
+            if rms < thresh {
+                trailingSilentFrames += 1
+            } else {
+                speechFrames += 1
+                trailingSilentFrames = 0
+            }
             used += frame
         }
         carry.removeFirst(used)
-        let fps = Double(sampleRate) / Double(frame)
         let pending = frameRms.count - cutFrame
         guard Double(pending) >= minChunk * fps else { return nil }
         let threshold = silenceThreshold(fps: fps)
@@ -70,6 +104,7 @@ public struct Chunker {
     /// 3× the 10th percentile, capped at 30% of the 90th, never below 0.006.
     private func silenceThreshold(fps: Double) -> Float {
         let recent = frameRms.suffix(Int(10 * fps)).sorted()
+        guard !recent.isEmpty else { return 0.006 }
         let floor = recent[recent.count / 10]
         let speech = recent[recent.count * 9 / 10]
         return max(0.006, min(floor * 3, speech * 0.3))

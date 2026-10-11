@@ -6,6 +6,7 @@ final class OverlayModel: ObservableObject {
     @Published var phase: Phase = .recording
     @Published var levels: [CGFloat] = Array(repeating: 0, count: OverlayModel.bars)
     @Published var language = "fr"
+    @Published var livePreview = ""
     static let bars = 30
     private var last: CGFloat = 0
 
@@ -26,53 +27,71 @@ struct PillView: View {
     @ObservedObject var model: OverlayModel
 
     var body: some View {
-        HStack(spacing: 6) {
-            Button(action: model.onCancel) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 28, height: 28)
-                    .background(Circle().fill(Color(white: 0.27)))
+        VStack(spacing: 4) {
+            if !model.livePreview.isEmpty {
+                Text(model.livePreview)
+                    .font(.system(size: 11.5, weight: .regular, design: .monospaced))
+                    .underline(true, color: Color(white: 0.55))
+                    .foregroundStyle(Color(white: 0.88))
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                    .frame(maxWidth: 260)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule().fill(Color(white: 0.11).opacity(0.94))
+                            .overlay(Capsule().strokeBorder(Color(white: 0.24), lineWidth: 1))
+                    )
             }
-            .buttonStyle(.plain)
-            .help("Cancel (Esc)")
 
-            center.frame(width: 128, height: 28)
-
-            Button(action: model.onCommit) {
-                Group {
-                    if model.phase == .transcribing {
-                        ProgressView().controlSize(.small).tint(.black)
-                    } else {
-                        Image(systemName: "checkmark").font(.system(size: 13, weight: .bold)).foregroundStyle(.black)
-                    }
+            HStack(spacing: 6) {
+                Button(action: model.onCancel) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 28, height: 28)
+                        .background(Circle().fill(Color(white: 0.27)))
                 }
-                .frame(width: 28, height: 28)
-                .background(Circle().fill(.white))
+                .buttonStyle(.plain)
+                .help("Cancel (Esc)")
+
+                center.frame(width: 128, height: 28)
+
+                Button(action: model.onCommit) {
+                    Group {
+                        if model.phase == .transcribing {
+                            ProgressView().controlSize(.small).tint(.black)
+                        } else {
+                            Image(systemName: "checkmark").font(.system(size: 13, weight: .bold)).foregroundStyle(.black)
+                        }
+                    }
+                    .frame(width: 28, height: 28)
+                    .background(Circle().fill(.white))
+                }
+                .buttonStyle(.plain)
+                .disabled(model.phase != .recording)
+                .help("Transcribe (Return)")
             }
-            .buttonStyle(.plain)
-            .disabled(model.phase != .recording)
-            .help("Transcribe (Return)")
-        }
-        .padding(.horizontal, 6)
-        .frame(height: 42)
-        .background(
-            Capsule().fill(Color(white: 0.085))
-                .overlay(Capsule().strokeBorder(Color(white: 0.24), lineWidth: 1))
-        )
-        .overlay(alignment: .top) {
-            Button(action: model.onLanguage) {
-                Text(model.language.uppercased())
-                    .font(.system(size: 9, weight: .semibold, design: .rounded))
-                    .foregroundStyle(Color(white: 0.7))
-                    .padding(.horizontal, 6).padding(.vertical, 1.5)
-                    .background(Capsule().fill(Color(white: 0.085)).overlay(Capsule().strokeBorder(Color(white: 0.24), lineWidth: 1)))
+            .padding(.horizontal, 6)
+            .frame(height: 42)
+            .background(
+                Capsule().fill(Color(white: 0.085))
+                    .overlay(Capsule().strokeBorder(Color(white: 0.24), lineWidth: 1))
+            )
+            .overlay(alignment: .top) {
+                Button(action: model.onLanguage) {
+                    Text(model.language.uppercased())
+                        .font(.system(size: 9, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Color(white: 0.7))
+                        .padding(.horizontal, 6).padding(.vertical, 1.5)
+                        .background(Capsule().fill(Color(white: 0.085)).overlay(Capsule().strokeBorder(Color(white: 0.24), lineWidth: 1)))
+                }
+                .buttonStyle(.plain)
+                .offset(y: -8)
+                .help("Language")
             }
-            .buttonStyle(.plain)
-            .offset(y: -8)
-            .help("Language")
+            .padding(.top, 10)
         }
-        .padding(.top, 10)
         .fixedSize()
     }
 
