@@ -14,9 +14,16 @@ import re
 import time
 from typing import Any, Dict, List, Optional, Sequence
 
-DEFAULT_HOME = os.path.expanduser("~/Library/Application Support/md.thomas.voice")
+import sys
+
+DEFAULT_HOME = (
+    os.path.expanduser("~/Library/Application Support/md.thomas.voice")
+    if sys.platform == "darwin"
+    else os.path.expanduser("~/.local/share/md.thomas.voice")
+)
 
 FILLERS_BY_LANG = {
+    "auto": {"um", "uh", "erm", "er", "hm", "hmm", "uhm", "euh", "heu", "bah", "ben"},
     "en": {"um", "uh", "erm", "er", "hm", "hmm", "uhm"},
     "fr": {"euh", "heu", "bah", "ben", "hmm", "hm"},
     "de": {"äh", "ähm", "hm", "hmm"},

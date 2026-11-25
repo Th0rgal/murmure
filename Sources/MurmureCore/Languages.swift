@@ -1,10 +1,11 @@
-/// Languages the pinned Cohere Transcribe checkpoint accepts. It does not
-/// auto-detect: every request names one.
+/// Languages accepted by voiced (`auto` enables bilingual auto-detection on
+/// Parakeet-TDT-v3 / Qwen3-ASR backends; Cohere Transcribe uses explicit codes).
 public struct Language: Hashable, Sendable {
     public let code: String
     public let name: String
 
     public static let all: [Language] = [
+        .init(code: "auto", name: "Auto (FR / EN)"),
         .init(code: "fr", name: "Français"), .init(code: "en", name: "English"),
         .init(code: "de", name: "Deutsch"), .init(code: "es", name: "Español"),
         .init(code: "it", name: "Italiano"), .init(code: "pt", name: "Português"),

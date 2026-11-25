@@ -300,6 +300,26 @@ class PipelineAndLearnTest(unittest.TestCase):
         sugg = learn.cmd_suggest(self.home)
         self.assertIn("SandboxedSh", sugg["suggestions"])
 
+    def test_auto_language_and_qwen3_cleanup(self):
+        import pipeline as vp
+        import worker as wk
+
+        self.assertIn("auto", wk.SUPPORTED_LANGUAGES)
+        # Bilingual auto disfluency stripping handles both EN and FR fillers
+        self.assertEqual(
+            vp.strip_disfluencies("Euh um bonjour everyone", language="auto"),
+            "Bonjour everyone",
+        )
+        # Qwen3 <asr_text> extraction + repetition-loop safeguard
+        self.assertEqual(
+            wk.clean_qwen_asr_output("language French<asr_text>Bonjour Thomas.<|endoftext|>"),
+            "Bonjour Thomas.",
+        )
+        self.assertEqual(
+            wk.clean_qwen_asr_output("Hello world" + "8" * 25),
+            "Hello world",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

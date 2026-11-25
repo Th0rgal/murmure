@@ -64,10 +64,10 @@ PROTOCOL_VERSION = 1
 MODEL_REPO = "MarkChen1214/cohere-transcribe-03-2026-MLX-Mixed-2bit3bit4bit"
 MODEL_REVISION = "553445e84959f9ec3fcd43443bce75ea05c400f3"
 
-# Languages accepted by the pinned checkpoint (config.json: supported_languages).
-# The model has no auto-detection: every request names one of these.
+# Languages accepted by voiced (`auto` enables true bilingual auto-detection on
+# Parakeet-TDT-v3 / Qwen3-ASR backends; Cohere falls back to ORB_VOICE_AUTO_FALLBACK_LANG).
 SUPPORTED_LANGUAGES = (
-    "en", "fr", "de", "es", "it", "pt", "nl", "pl", "el", "ar", "ja", "zh", "vi", "ko",
+    "auto", "en", "fr", "de", "es", "it", "pt", "nl", "pl", "el", "ar", "ja", "zh", "vi", "ko",
 )
 
 DEFAULT_MAX_SECS = 120.0
@@ -294,7 +294,8 @@ class MlxBackend:
         import numpy as np
 
         audio = np.frombuffer(samples.tobytes(), dtype=np.int16).astype(np.float32) / 32768.0
-        result = self.model.generate(audio=audio, sample_rate=rate, language=language, punctuation=punctuation)
+        eff_lang = os.environ.get("ORB_VOICE_AUTO_FALLBACK_LANG", "en") if language == "auto" else language
+        result = self.model.generate(audio=audio, sample_rate=rate, language=eff_lang, punctuation=punctuation)
         return (result.text or "").strip()
 
     def unload(self) -> None:
@@ -319,9 +320,147 @@ class MlxBackend:
             return {"peak_memory_bytes": None}
 
 
+def clean_qwen_asr_output(raw: str) -> str:
+    """Extract text after `<asr_text>` and truncate repetition loops (>= 20 repeated chars)."""
+    import re
+
+    s = (raw or "").strip()
+    tag = "<asr_text>"
+    idx = s.find(tag)
+    if idx >= 0:
+        s = s[idx + len(tag) :].strip()
+    sp = s.find("<|")
+    if sp > 0:
+        s = s[:sp].strip()
+    m = re.search(r"(.)\1{19,}", s)
+    if m:
+        s = s[: m.start()].strip()
+    return s
+
+
+class ParakeetOnnxBackend:
+    """Cross-platform (macOS + Linux/Omarchnix) Parakeet-TDT-0.6B-v3 ONNX backend via sherpa-onnx.
+    True 25-language European auto-detection (FR/EN/DE/ES/IT/PT...) with zero Chinese bias.
+    """
+
+    name = "parakeet-onnx"
+
+    def __init__(self, model_dir: Optional[str] = None) -> None:
+        self.loaded = False
+        self.recognizer = None
+        self.model_dir = model_dir or os.environ.get("ORB_VOICE_PARAKEET_DIR") or resolve_model_dir()
+
+    def load(self) -> Dict[str, Any]:
+        if self.loaded:
+            return {"load_secs": 0.0, "warmup_secs": 0.0, "cached": True}
+        try:
+            import sherpa_onnx
+        except ImportError as e:
+            raise WorkerError("deps_missing", f"sherpa-onnx is not installed: {e}") from None
+        t0 = time.perf_counter()
+        self.recognizer = sherpa_onnx.OfflineRecognizer.from_transducer(
+            encoder=os.path.join(self.model_dir, "encoder.int8.onnx"),
+            decoder=os.path.join(self.model_dir, "decoder.int8.onnx"),
+            joiner=os.path.join(self.model_dir, "joiner.int8.onnx"),
+            tokens=os.path.join(self.model_dir, "tokens.txt"),
+            num_threads=int(os.environ.get("ORB_VOICE_THREADS", "4")),
+            model_type="nemo_transducer",
+            provider="cpu",
+        )
+        load_secs = time.perf_counter() - t0
+        self.loaded = True
+        return {"load_secs": round(load_secs, 3), "warmup_secs": 0.0, "cached": False}
+
+    def transcribe(self, samples: array.array, rate: int, language: str, punctuation: bool) -> str:
+        import numpy as np
+
+        audio = np.frombuffer(samples.tobytes(), dtype=np.int16).astype(np.float32) / 32768.0
+        stream = self.recognizer.create_stream()
+        stream.accept_waveform(rate, audio)
+        self.recognizer.decode_stream(stream)
+        return (stream.result.text or "").strip()
+
+    def unload(self) -> None:
+        self.recognizer = None
+        self.loaded = False
+
+    def stats(self) -> Dict[str, Any]:
+        return {"peak_memory_bytes": None}
+
+
+class Qwen3HttpBackend:
+    """Cross-platform local HTTP client for llama-server running Qwen3-ASR-1.7B IQ4_XS (4.42% WER).
+    Supports true 30+ language auto-detection on both macOS and Linux/Omarchnix.
+    """
+
+    name = "qwen3-http"
+
+    def __init__(self, base_url: Optional[str] = None) -> None:
+        self.loaded = False
+        self.base_url = (base_url or os.environ.get("ORB_VOICE_QWEN3_URL") or "http://127.0.0.1:8089").rstrip("/")
+        self.model_dir = self.base_url
+
+    def load(self) -> Dict[str, Any]:
+        self.loaded = True
+        return {"load_secs": 0.0, "warmup_secs": 0.0, "cached": True}
+
+    def transcribe(self, samples: array.array, rate: int, language: str, punctuation: bool) -> str:
+        import base64
+        import urllib.request
+
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(rate)
+            wf.writeframes(samples.tobytes())
+        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        secs = len(samples) / float(rate)
+        max_tokens = max(48, min(256, int(secs * 8)))
+        prompt = "Transcribe the audio." if language == "auto" else f"Transcribe the audio in {language}."
+        payload = json.dumps({
+            "model": "qwen3-asr",
+            "temperature": 0.0,
+            "max_tokens": max_tokens,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "input_audio", "input_audio": {"data": b64, "format": "wav"}},
+                    {"type": "text", "text": prompt},
+                ],
+            }],
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            f"{self.base_url}/v1/chat/completions",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        raw = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        return clean_qwen_asr_output(raw)
+
+    def unload(self) -> None:
+        self.loaded = False
+
+    def stats(self) -> Dict[str, Any]:
+        return {"peak_memory_bytes": None}
+
+
 def make_backend():
     if os.environ.get("ORB_VOICE_FAKE") == "1":
         return FakeBackend()
+    choice = (os.environ.get("ORB_VOICE_BACKEND") or "mlx").strip().lower()
+    if choice == "parakeet":
+        return ParakeetOnnxBackend()
+    if choice == "qwen3":
+        return Qwen3HttpBackend()
+    if choice == "auto":
+        if os.environ.get("ORB_VOICE_PARAKEET_DIR"):
+            return ParakeetOnnxBackend()
+        if os.environ.get("ORB_VOICE_QWEN3_URL"):
+            return Qwen3HttpBackend()
     return MlxBackend()
 
 

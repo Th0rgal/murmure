@@ -98,27 +98,62 @@ struct PillView: View {
     @ViewBuilder private var center: some View {
         switch model.phase {
         case .recording:
-            HStack(spacing: 2.2) {
-                ForEach(0 ..< OverlayModel.bars, id: \.self) { i in
-                    Capsule().fill(.white)
-                        .frame(width: 2, height: 2 + model.levels[i] * 24)
-                }
+            // ProMotion 60-120 FPS Canvas waveform (zero SwiftUI view-tree rebuilds per tick)
+            TimelineView(.animation) { _ in
+                FluidWaveformCanvas(targets: model.levels)
             }
-            .animation(.linear(duration: 0.04), value: model.levels)
         case .transcribing:
             TimelineView(.animation) { ctx in
                 let t = ctx.date.timeIntervalSinceReferenceDate
-                HStack(spacing: 2.2) {
-                    ForEach(0 ..< OverlayModel.bars, id: \.self) { i in
-                        Circle().fill(.white)
-                            .frame(width: 2, height: 2)
-                            .opacity(0.25 + 0.75 * max(0, sin(t * 7 - Double(i) * 0.35)))
+                Canvas { gc, size in
+                    let count = OverlayModel.bars
+                    let dot: CGFloat = 2
+                    let gap = (size.width - dot * CGFloat(count)) / CGFloat(max(count - 1, 1))
+                    let midY = size.height / 2
+                    for i in 0 ..< count {
+                        let x = CGFloat(i) * (dot + gap)
+                        let opacity = 0.25 + 0.75 * max(0, sin(t * 7 - Double(i) * 0.35))
+                        let rect = CGRect(x: x, y: midY - dot / 2, width: dot, height: dot)
+                        gc.fill(Path(ellipseIn: rect), with: .color(.white.opacity(opacity)))
                     }
                 }
             }
         case let .message(text):
             Text(text).font(.system(size: 11, weight: .medium)).foregroundStyle(Color(white: 0.85))
                 .lineLimit(1).minimumScaleFactor(0.6)
+        }
+    }
+}
+
+/// Smoothly interpolated 60-120 FPS Canvas waveform matching Scribe & Murmure's obsidian pill language.
+private struct FluidWaveformCanvas: View {
+    let targets: [CGFloat]
+    @State private var smoothed: [CGFloat] = Array(repeating: 0, count: OverlayModel.bars)
+
+    var body: some View {
+        Canvas { gc, size in
+            let count = min(targets.count, smoothed.count)
+            guard count > 0 else { return }
+            let barW: CGFloat = 2
+            let gap = (size.width - barW * CGFloat(count)) / CGFloat(max(count - 1, 1))
+            let midY = size.height / 2
+            let maxH = max(size.height - 2, barW)
+            for i in 0 ..< count {
+                let lvl = max(0, min(1, smoothed[i]))
+                let h = barW + lvl * (maxH - barW)
+                let x = CGFloat(i) * (barW + gap)
+                let rect = CGRect(x: x, y: midY - h / 2, width: barW, height: h)
+                let alpha = 0.38 + 0.62 * Double(lvl)
+                gc.fill(
+                    Path(roundedRect: rect, cornerRadius: barW / 2),
+                    with: .color(.white.opacity(alpha))
+                )
+            }
+        }
+        .onChange(of: targets) { _, newVals in
+            for i in 0 ..< min(newVals.count, smoothed.count) {
+                smoothed[i] += (newVals[i] - smoothed[i]) * 0.45
+            }
         }
     }
 }
